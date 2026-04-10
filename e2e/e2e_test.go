@@ -5,12 +5,22 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
 
 const gatewayURL = "http://localhost:8080"
+
+func testAPIKey(t *testing.T) string {
+	t.Helper()
+	key := os.Getenv("OPENROUTER_API_KEY")
+	if key == "" {
+		t.Fatal("OPENROUTER_API_KEY env var is required to run E2E tests")
+	}
+	return key
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -75,15 +85,15 @@ func TestProviderCRUD(t *testing.T) {
 
 	// 2b. Add a new provider
 	t.Run("AddProvider", func(t *testing.T) {
-		payload := `{
+		payload := fmt.Sprintf(`{
 			"name": "e2e-test-provider",
 			"url": "https://openrouter.ai/api",
 			"models": ["google/gemma-4-26b-a4b-it:free"],
 			"weight": 1,
 			"enabled": true,
-			"api_key": "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",
+			"api_key": %q,
 			"timeout_seconds": 60
-		}`
+		}`, testAPIKey(t))
 		resp, body := apiRequest(t, "POST", "/api/providers", payload)
 		if resp.StatusCode != 201 {
 			t.Fatalf("expected 201, got %d: %s", resp.StatusCode, body)
@@ -434,25 +444,26 @@ func TestStreamingCompletion(t *testing.T) {
 // ── 9. Weighted Load Balancing ──────────────────────────────────────────────
 
 func TestLoadBalancing(t *testing.T) {
+	key := testAPIKey(t)
 	// Add two providers for the same model with different weights
-	p1 := `{
+	p1 := fmt.Sprintf(`{
 		"name": "lb-test-a",
 		"url": "https://openrouter.ai/api",
 		"models": ["google/gemma-4-26b-a4b-it:free"],
 		"weight": 8,
 		"enabled": true,
-		"api_key": "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",
+		"api_key": %q,
 		"timeout_seconds": 120
-	}`
-	p2 := `{
+	}`, key)
+	p2 := fmt.Sprintf(`{
 		"name": "lb-test-b",
 		"url": "https://openrouter.ai/api",
 		"models": ["google/gemma-4-26b-a4b-it:free"],
 		"weight": 2,
 		"enabled": true,
-		"api_key": "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",
+		"api_key": %q,
 		"timeout_seconds": 120
-	}`
+	}`, key)
 
 	resp1, body1 := apiRequest(t, "POST", "/api/providers", p1)
 	if resp1.StatusCode != 201 {

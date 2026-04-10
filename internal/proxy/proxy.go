@@ -13,31 +13,34 @@ import (
 
 	"github.com/vymoiseenkov/ai-agents-platform/internal/balancer"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/config"
+	"github.com/vymoiseenkov/ai-agents-platform/internal/mlflow"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/stats"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/telemetry"
 )
 
 type Proxy struct {
-	balancer  *balancer.Balancer
-	logger    *slog.Logger
-	collector *stats.Collector
-	metrics   *telemetry.Metrics
-	client    *http.Client
+	balancer     *balancer.Balancer
+	logger       *slog.Logger
+	collector    *stats.Collector
+	metrics      *telemetry.Metrics
+	mlflow       *mlflow.Client
+	client       *http.Client
 	streamClient *http.Client
 }
 
-func New(b *balancer.Balancer, logger *slog.Logger, collector *stats.Collector, metrics *telemetry.Metrics) *Proxy {
+func New(b *balancer.Balancer, logger *slog.Logger, collector *stats.Collector, metrics *telemetry.Metrics, ml *mlflow.Client) *Proxy {
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 10,
 		IdleConnTimeout:     90 * time.Second,
 	}
 	return &Proxy{
-		balancer:  b,
-		logger:    logger,
-		collector: collector,
-		metrics:   metrics,
-		client:    &http.Client{Transport: transport},
+		balancer:     b,
+		logger:       logger,
+		collector:    collector,
+		metrics:      metrics,
+		mlflow:       ml,
+		client:       &http.Client{Transport: transport},
 		streamClient: &http.Client{Transport: transport, Timeout: 0},
 	}
 }
@@ -108,6 +111,7 @@ func (p *Proxy) tryProxy(w http.ResponseWriter, origReq *http.Request, provider 
 	if err != nil {
 		p.logger.Error("failed to create request", "provider", provider.Name, "error", err)
 		p.record(origReq.Context(), provider.Name, model, 0, time.Since(start), true, err.Error())
+		p.balancer.RecordFailure(provider.Name)
 		return false
 	}
 
@@ -132,6 +136,7 @@ func (p *Proxy) tryProxy(w http.ResponseWriter, origReq *http.Request, provider 
 	if err != nil {
 		p.logger.Error("request failed", "provider", provider.Name, "error", err)
 		p.record(origReq.Context(), provider.Name, model, 0, latency, true, err.Error())
+		p.balancer.RecordFailure(provider.Name)
 		return false
 	}
 
@@ -139,10 +144,11 @@ func (p *Proxy) tryProxy(w http.ResponseWriter, origReq *http.Request, provider 
 		resp.Body.Close()
 		p.logger.Warn("provider returned 5xx", "provider", provider.Name, "status", resp.StatusCode)
 		p.record(origReq.Context(), provider.Name, model, resp.StatusCode, latency, true, fmt.Sprintf("HTTP %d", resp.StatusCode))
+		p.balancer.RecordFailure(provider.Name)
 		return false
 	}
 
-	p.record(origReq.Context(), provider.Name, model, resp.StatusCode, latency, false, "")
+	p.balancer.RecordSuccess(provider.Name)
 
 	p.logger.Info("proxying response", "provider", provider.Name, "status", resp.StatusCode, "stream", stream)
 
@@ -153,12 +159,65 @@ func (p *Proxy) tryProxy(w http.ResponseWriter, origReq *http.Request, provider 
 	}
 	w.WriteHeader(resp.StatusCode)
 
+	var usage Usage
+	var ttft, tpot time.Duration
+
 	if stream {
-		p.streamResponse(w, resp.Body)
+		tr := NewTimingReader(resp.Body, start)
+		p.streamResponse(w, tr)
+		totalDuration := time.Since(start)
+		ttft = tr.TTFT()
+		usage = tr.StreamUsage()
+		if usage.CompletionTokens > 0 {
+			tpot = tr.TPOT(totalDuration, usage.CompletionTokens)
+		}
 	} else {
-		io.Copy(w, resp.Body)
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			p.logger.Error("failed to read response body", "provider", provider.Name, "error", err)
+		}
+		w.Write(respBody)
+		usage = parseUsageFromBody(respBody)
+		ttft = latency // for non-streaming, TTFT ≈ full latency
 	}
 	resp.Body.Close()
+
+	totalLatency := time.Since(start)
+	cost := usage.ComputeCost(provider.PricePerInputToken, provider.PricePerOutputToken)
+
+	p.collector.Record(stats.RequestRecord{
+		Provider:     provider.Name,
+		Model:        model,
+		Status:       resp.StatusCode,
+		Latency:      totalLatency,
+		InputTokens:  usage.PromptTokens,
+		OutputTokens: usage.CompletionTokens,
+		Cost:         cost,
+		TTFT:         ttft,
+	})
+	if p.metrics != nil {
+		p.metrics.RecordRequest(origReq.Context(), provider.Name, model, resp.StatusCode, totalLatency, false)
+		p.metrics.RecordTokens(origReq.Context(), provider.Name, model, usage.PromptTokens, usage.CompletionTokens, cost)
+		p.metrics.RecordTTFT(origReq.Context(), provider.Name, model, ttft)
+		if tpot > 0 {
+			p.metrics.RecordTPOT(origReq.Context(), provider.Name, model, tpot)
+		}
+	}
+
+	if p.mlflow != nil {
+		go p.mlflow.LogRun(mlflow.RunParams{
+			Provider:     provider.Name,
+			Model:        model,
+			Stream:       stream,
+			LatencyMs:    float64(totalLatency.Milliseconds()),
+			TTFTMs:       float64(ttft.Milliseconds()),
+			TPOTMs:       float64(tpot.Milliseconds()),
+			InputTokens:  usage.PromptTokens,
+			OutputTokens: usage.CompletionTokens,
+			Cost:         cost,
+			StatusCode:   resp.StatusCode,
+		})
+	}
 
 	return true
 }

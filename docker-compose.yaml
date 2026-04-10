@@ -53,6 +53,19 @@ services:
       gateway:
         condition: service_healthy
 
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.22.0
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:///mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-data:/mlflow
+
   grafana:
     image: grafana/grafana:11.6.0
     volumes:
@@ -74,3 +87,4 @@ volumes:
   postgres-data:
   prometheus-data:
   grafana-data:
+  mlflow-data:

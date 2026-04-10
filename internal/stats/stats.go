@@ -8,13 +8,17 @@ import (
 )
 
 type RequestRecord struct {
-	Provider  string
-	Model     string
-	Status    int
-	Latency   time.Duration
-	Error     bool
-	ErrorMsg  string
-	Timestamp time.Time
+	Provider     string
+	Model        string
+	Status       int
+	Latency      time.Duration
+	Error        bool
+	ErrorMsg     string
+	Timestamp    time.Time
+	InputTokens  int
+	OutputTokens int
+	Cost         float64
+	TTFT         time.Duration
 }
 
 type Collector struct {
@@ -72,13 +76,17 @@ func (c *Collector) cleanup() {
 }
 
 type ProviderStats struct {
-	Name         string  `json:"name"`
-	TotalReqs    int     `json:"total_requests"`
-	ErrorCount   int     `json:"error_count"`
-	ErrorRate    float64 `json:"error_rate"`
-	LatencyP50ms float64 `json:"latency_p50_ms"`
-	LatencyP95ms float64 `json:"latency_p95_ms"`
-	RPM          float64 `json:"rpm"`
+	Name          string  `json:"name"`
+	TotalReqs     int     `json:"total_requests"`
+	ErrorCount    int     `json:"error_count"`
+	ErrorRate     float64 `json:"error_rate"`
+	LatencyP50ms  float64 `json:"latency_p50_ms"`
+	LatencyP95ms  float64 `json:"latency_p95_ms"`
+	RPM           float64 `json:"rpm"`
+	InputTokens   int     `json:"input_tokens"`
+	OutputTokens  int     `json:"output_tokens"`
+	TotalCost     float64 `json:"total_cost"`
+	AvgTTFTMs     float64 `json:"avg_ttft_ms"`
 }
 
 type ModelStats struct {
@@ -100,6 +108,9 @@ type Snapshot struct {
 	ActiveProviders  int                    `json:"active_providers"`
 	AvgLatencyMs     float64                `json:"avg_latency_ms"`
 	ErrorRate        float64                `json:"error_rate"`
+	TotalInputTokens  int                   `json:"total_input_tokens"`
+	TotalOutputTokens int                   `json:"total_output_tokens"`
+	TotalCost        float64                `json:"total_cost"`
 	ByProvider       []ProviderStats        `json:"by_provider"`
 	ByModel          []ModelStats           `json:"by_model"`
 	RecentErrors     []ErrorEntry           `json:"recent_errors"`
@@ -138,6 +149,9 @@ func (c *Collector) Snapshot() Snapshot {
 		modelMap[r.Model]++
 		activeProviders[r.Provider] = true
 		totalLatency += r.Latency
+		snap.TotalInputTokens += r.InputTokens
+		snap.TotalOutputTokens += r.OutputTokens
+		snap.TotalCost += r.Cost
 		if r.Error {
 			errorCount++
 		}
@@ -157,15 +171,27 @@ func (c *Collector) Snapshot() Snapshot {
 	for name, recs := range provMap {
 		ps := ProviderStats{Name: name, TotalReqs: len(recs)}
 		var latencies []float64
+		var ttftSum float64
+		var ttftCount int
 		for _, r := range recs {
 			if r.Error {
 				ps.ErrorCount++
 			}
 			latencies = append(latencies, float64(r.Latency.Milliseconds()))
+			ps.InputTokens += r.InputTokens
+			ps.OutputTokens += r.OutputTokens
+			ps.TotalCost += r.Cost
+			if r.TTFT > 0 {
+				ttftSum += float64(r.TTFT.Milliseconds())
+				ttftCount++
+			}
 		}
 		if ps.TotalReqs > 0 {
 			ps.ErrorRate = float64(ps.ErrorCount) / float64(ps.TotalReqs) * 100
 			ps.RPM = float64(ps.TotalReqs) / window.Minutes()
+		}
+		if ttftCount > 0 {
+			ps.AvgTTFTMs = ttftSum / float64(ttftCount)
 		}
 		sort.Float64s(latencies)
 		ps.LatencyP50ms = percentile(latencies, 0.50)

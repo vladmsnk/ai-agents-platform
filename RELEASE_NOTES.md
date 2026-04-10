@@ -25,3 +25,38 @@
 - Docker and Docker Compose setup with PostgreSQL, Prometheus, and Grafana
 - Grafana dashboard with 9 panels (request rate, latency, error rate, CPU, goroutines, traffic distribution, response codes)
 - End-to-end test scaffold
+
+## v2.0.0 — AI Agents Platform
+
+### A2A Agent Registry (Google A2A spec)
+- `GET /.well-known/agent.json` — gateway's own agent card
+- `POST /a2a` — JSON-RPC endpoint (tasks/send, tasks/sendSubscribe with SSE, tasks/get, tasks/cancel)
+- `GET/POST/PUT/DELETE /api/agents` — admin CRUD for agent registration
+- Agents page in admin UI for registration and management
+- PostgreSQL-backed agent storage with in-memory cache
+
+### Enhanced Provider Model
+- New fields: `price_per_input_token`, `price_per_output_token`, `rate_limit_rpm`, `priority`
+- Pricing and rate limit configuration in admin UI
+- Database migration for existing installations
+
+### Advanced Load Balancer
+- **Strategy interface** with 3 implementations: weighted round-robin, latency-based, priority-based
+- **Circuit breaker** — per-provider closed/open/half-open states with configurable failure threshold and recovery timeout
+- **Per-provider rate limiter** — token-bucket based on RPM, non-consuming peek for candidate scoring
+- **Health-aware routing** — unhealthy, circuit-open, and rate-limited providers are skipped automatically
+- Configurable via `balancer_strategy` in config (`weighted`, `latency`, `priority`)
+
+### LLM Observability
+- **Token counting** — parses `usage` from streaming and non-streaming OpenAI-compatible responses
+- **TTFT** (Time to First Token) — measured via response body wrapper
+- **TPOT** (Time Per Output Token) — computed from streaming chunk timing
+- **Cost tracking** — per-request cost based on provider pricing
+- 5 new Prometheus/OTel metrics: `gateway.ttft`, `gateway.tpot`, `gateway.tokens.input`, `gateway.tokens.output`, `gateway.request.cost`
+- Extended stats API with token counts, cost, and avg TTFT per provider
+- Monitoring page updated with token/cost/TTFT cards and table columns
+
+### MLflow Tracing
+- Each LLM request logged as an MLflow run with params (model, provider, stream) and metrics (latency, TTFT, TPOT, tokens, cost)
+- MLflow server added to docker-compose (port 5000)
+- Configurable via `mlflow_url` in config (empty = disabled)

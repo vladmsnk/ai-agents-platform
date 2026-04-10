@@ -8,20 +8,32 @@ import (
 )
 
 type Provider struct {
-	Name    string   `yaml:"name" json:"name"`
-	URL     string   `yaml:"url" json:"url"`
-	Models  []string `yaml:"models" json:"models"`
-	Weight  int      `yaml:"weight" json:"weight"`
-	Enabled bool     `yaml:"enabled" json:"enabled"`
-	APIKey  string   `yaml:"-" json:"-"`
-	KeyEnv  string   `yaml:"key_env" json:"key_env,omitempty"`
-	Timeout int      `yaml:"timeout_seconds" json:"timeout_seconds"`
+	Name                string   `yaml:"name" json:"name"`
+	URL                 string   `yaml:"url" json:"url"`
+	Models              []string `yaml:"models" json:"models"`
+	Weight              int      `yaml:"weight" json:"weight"`
+	Enabled             bool     `yaml:"enabled" json:"enabled"`
+	APIKey              string   `yaml:"-" json:"-"`
+	KeyEnv              string   `yaml:"key_env" json:"key_env,omitempty"`
+	Timeout             int      `yaml:"timeout_seconds" json:"timeout_seconds"`
+	PricePerInputToken  float64  `yaml:"price_per_input_token" json:"price_per_input_token"`
+	PricePerOutputToken float64  `yaml:"price_per_output_token" json:"price_per_output_token"`
+	RateLimitRPM        int      `yaml:"rate_limit_rpm" json:"rate_limit_rpm"`
+	Priority            int      `yaml:"priority" json:"priority"`
 }
 
+const (
+	StrategyWeighted = "weighted"
+	StrategyLatency  = "latency"
+	StrategyPriority = "priority"
+)
+
 type Config struct {
-	Listen      string     `yaml:"listen" json:"listen"`
-	DatabaseURL string     `yaml:"database_url" json:"-"`
-	Providers   []Provider `yaml:"providers" json:"providers"`
+	Listen           string     `yaml:"listen" json:"listen"`
+	DatabaseURL      string     `yaml:"database_url" json:"-"`
+	Providers        []Provider `yaml:"providers" json:"providers"`
+	BalancerStrategy string     `yaml:"balancer_strategy" json:"balancer_strategy"`
+	MlflowURL        string     `yaml:"mlflow_url" json:"mlflow_url"`
 }
 
 func Load(path string) (*Config, error) {
@@ -65,6 +77,9 @@ func ApplyDefaults(p *Provider) {
 	}
 	if p.Timeout <= 0 {
 		p.Timeout = 60
+	}
+	if p.Priority <= 0 {
+		p.Priority = 10
 	}
 	if p.KeyEnv != "" && p.APIKey == "" {
 		p.APIKey = os.Getenv(p.KeyEnv)

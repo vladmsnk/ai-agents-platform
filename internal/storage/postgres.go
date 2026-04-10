@@ -49,25 +49,58 @@ func (s *Store) Close() {
 func (s *Store) migrate(ctx context.Context) error {
 	_, err := s.pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS providers (
-			name             TEXT PRIMARY KEY,
-			url              TEXT NOT NULL,
-			models           TEXT[] NOT NULL DEFAULT '{}',
-			weight           INTEGER NOT NULL DEFAULT 1,
-			enabled          BOOLEAN NOT NULL DEFAULT true,
-			api_key          TEXT NOT NULL DEFAULT '',
-			key_env          TEXT NOT NULL DEFAULT '',
-			timeout_seconds  INTEGER NOT NULL DEFAULT 60,
-			created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-			updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+			name                  TEXT PRIMARY KEY,
+			url                   TEXT NOT NULL,
+			models                TEXT[] NOT NULL DEFAULT '{}',
+			weight                INTEGER NOT NULL DEFAULT 1,
+			enabled               BOOLEAN NOT NULL DEFAULT true,
+			api_key               TEXT NOT NULL DEFAULT '',
+			key_env               TEXT NOT NULL DEFAULT '',
+			timeout_seconds       INTEGER NOT NULL DEFAULT 60,
+			price_per_input_token  DOUBLE PRECISION NOT NULL DEFAULT 0,
+			price_per_output_token DOUBLE PRECISION NOT NULL DEFAULT 0,
+			rate_limit_rpm        INTEGER NOT NULL DEFAULT 0,
+			priority              INTEGER NOT NULL DEFAULT 10,
+			created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 		)
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Add columns for existing databases
+	for _, col := range []string{
+		"ALTER TABLE providers ADD COLUMN IF NOT EXISTS price_per_input_token DOUBLE PRECISION NOT NULL DEFAULT 0",
+		"ALTER TABLE providers ADD COLUMN IF NOT EXISTS price_per_output_token DOUBLE PRECISION NOT NULL DEFAULT 0",
+		"ALTER TABLE providers ADD COLUMN IF NOT EXISTS rate_limit_rpm INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE providers ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 10",
+	} {
+		if _, err := s.pool.Exec(ctx, col); err != nil {
+			return err
+		}
+	}
+
+	if err := s.migrateAgents(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+const providerColumns = `name, url, models, weight, enabled, api_key, key_env, timeout_seconds,
+	price_per_input_token, price_per_output_token, rate_limit_rpm, priority`
+
+func scanProvider(scan func(dest ...any) error) (config.Provider, error) {
+	var p config.Provider
+	err := scan(&p.Name, &p.URL, &p.Models, &p.Weight, &p.Enabled, &p.APIKey, &p.KeyEnv, &p.Timeout,
+		&p.PricePerInputToken, &p.PricePerOutputToken, &p.RateLimitRPM, &p.Priority)
+	return p, err
 }
 
 func (s *Store) ListProviders(ctx context.Context) ([]config.Provider, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT name, url, models, weight, enabled, api_key, key_env, timeout_seconds
-		 FROM providers ORDER BY created_at`)
+		`SELECT `+providerColumns+` FROM providers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -75,8 +108,8 @@ func (s *Store) ListProviders(ctx context.Context) ([]config.Provider, error) {
 
 	var providers []config.Provider
 	for rows.Next() {
-		var p config.Provider
-		if err := rows.Scan(&p.Name, &p.URL, &p.Models, &p.Weight, &p.Enabled, &p.APIKey, &p.KeyEnv, &p.Timeout); err != nil {
+		p, err := scanProvider(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
 		providers = append(providers, p)
@@ -85,11 +118,9 @@ func (s *Store) ListProviders(ctx context.Context) ([]config.Provider, error) {
 }
 
 func (s *Store) GetProvider(ctx context.Context, name string) (config.Provider, bool, error) {
-	var p config.Provider
-	err := s.pool.QueryRow(ctx,
-		`SELECT name, url, models, weight, enabled, api_key, key_env, timeout_seconds
-		 FROM providers WHERE name = $1`, name).
-		Scan(&p.Name, &p.URL, &p.Models, &p.Weight, &p.Enabled, &p.APIKey, &p.KeyEnv, &p.Timeout)
+	row := s.pool.QueryRow(ctx,
+		`SELECT `+providerColumns+` FROM providers WHERE name = $1`, name)
+	p, err := scanProvider(row.Scan)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return config.Provider{}, false, nil
@@ -99,20 +130,28 @@ func (s *Store) GetProvider(ctx context.Context, name string) (config.Provider, 
 	return p, true, nil
 }
 
+func providerValues(p config.Provider) []any {
+	return []any{p.Name, p.URL, p.Models, p.Weight, p.Enabled, p.APIKey, p.KeyEnv, p.Timeout,
+		p.PricePerInputToken, p.PricePerOutputToken, p.RateLimitRPM, p.Priority}
+}
+
 func (s *Store) AddProvider(ctx context.Context, p config.Provider) error {
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO providers (name, url, models, weight, enabled, api_key, key_env, timeout_seconds)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		p.Name, p.URL, p.Models, p.Weight, p.Enabled, p.APIKey, p.KeyEnv, p.Timeout)
+		`INSERT INTO providers (`+providerColumns+`)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		providerValues(p)...)
 	return err
 }
 
 func (s *Store) UpdateProvider(ctx context.Context, name string, p config.Provider) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE providers SET url = $2, models = $3, weight = $4, enabled = $5,
-		 api_key = $6, key_env = $7, timeout_seconds = $8, updated_at = $9
+		 api_key = $6, key_env = $7, timeout_seconds = $8,
+		 price_per_input_token = $9, price_per_output_token = $10,
+		 rate_limit_rpm = $11, priority = $12, updated_at = $13
 		 WHERE name = $1`,
-		name, p.URL, p.Models, p.Weight, p.Enabled, p.APIKey, p.KeyEnv, p.Timeout, time.Now())
+		name, p.URL, p.Models, p.Weight, p.Enabled, p.APIKey, p.KeyEnv, p.Timeout,
+		p.PricePerInputToken, p.PricePerOutputToken, p.RateLimitRPM, p.Priority, time.Now())
 	return err
 }
 
@@ -129,9 +168,9 @@ func (s *Store) DeleteProvider(ctx context.Context, name string) error {
 
 func (s *Store) UpsertProvider(ctx context.Context, p config.Provider) error {
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO providers (name, url, models, weight, enabled, api_key, key_env, timeout_seconds)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`INSERT INTO providers (`+providerColumns+`)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		 ON CONFLICT (name) DO NOTHING`,
-		p.Name, p.URL, p.Models, p.Weight, p.Enabled, p.APIKey, p.KeyEnv, p.Timeout)
+		providerValues(p)...)
 	return err
 }

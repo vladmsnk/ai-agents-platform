@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/vymoiseenkov/ai-agents-platform/internal/a2a"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/balancer"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/config"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/health"
@@ -21,11 +22,12 @@ type API struct {
 	balancer *balancer.Balancer
 	health   *health.Checker
 	stats    *stats.Collector
+	registry *a2a.Registry
 	logger   *slog.Logger
 }
 
-func New(store *storage.Store, b *balancer.Balancer, h *health.Checker, s *stats.Collector, logger *slog.Logger) *API {
-	return &API{store: store, balancer: b, health: h, stats: s, logger: logger}
+func New(store *storage.Store, b *balancer.Balancer, h *health.Checker, s *stats.Collector, registry *a2a.Registry, logger *slog.Logger) *API {
+	return &API{store: store, balancer: b, health: h, stats: s, registry: registry, logger: logger}
 }
 
 func (a *API) Register(mux *http.ServeMux) {
@@ -34,6 +36,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/stats", a.handleStats)
 	mux.HandleFunc("/api/health", a.handleHealthAll)
 	mux.HandleFunc("/api/health/", a.handleHealthOne)
+	mux.HandleFunc("/api/agents", a.handleAgents)
+	mux.HandleFunc("/api/agents/", a.handleAgent)
 }
 
 func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) {
@@ -120,14 +124,18 @@ func (a *API) getProvider(w http.ResponseWriter, r *http.Request, name string) {
 }
 
 type providerInput struct {
-	Name    string   `json:"name"`
-	URL     string   `json:"url"`
-	Models  []string `json:"models"`
-	Weight  int      `json:"weight"`
-	Enabled *bool    `json:"enabled"`
-	APIKey  string   `json:"api_key"`
-	KeyEnv  string   `json:"key_env"`
-	Timeout int      `json:"timeout_seconds"`
+	Name                string   `json:"name"`
+	URL                 string   `json:"url"`
+	Models              []string `json:"models"`
+	Weight              int      `json:"weight"`
+	Enabled             *bool    `json:"enabled"`
+	APIKey              string   `json:"api_key"`
+	KeyEnv              string   `json:"key_env"`
+	Timeout             int      `json:"timeout_seconds"`
+	PricePerInputToken  *float64 `json:"price_per_input_token"`
+	PricePerOutputToken *float64 `json:"price_per_output_token"`
+	RateLimitRPM        *int     `json:"rate_limit_rpm"`
+	Priority            *int     `json:"priority"`
 }
 
 func (a *API) addProvider(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +160,18 @@ func (a *API) addProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.APIKey != "" {
 		p.APIKey = input.APIKey
+	}
+	if input.PricePerInputToken != nil {
+		p.PricePerInputToken = *input.PricePerInputToken
+	}
+	if input.PricePerOutputToken != nil {
+		p.PricePerOutputToken = *input.PricePerOutputToken
+	}
+	if input.RateLimitRPM != nil {
+		p.RateLimitRPM = *input.RateLimitRPM
+	}
+	if input.Priority != nil {
+		p.Priority = *input.Priority
 	}
 	config.ApplyDefaults(&p)
 
@@ -222,6 +242,18 @@ func (a *API) updateProvider(w http.ResponseWriter, r *http.Request, name string
 	if input.KeyEnv != "" {
 		existing.KeyEnv = input.KeyEnv
 		existing.APIKey = os.Getenv(input.KeyEnv)
+	}
+	if input.PricePerInputToken != nil {
+		existing.PricePerInputToken = *input.PricePerInputToken
+	}
+	if input.PricePerOutputToken != nil {
+		existing.PricePerOutputToken = *input.PricePerOutputToken
+	}
+	if input.RateLimitRPM != nil {
+		existing.RateLimitRPM = *input.RateLimitRPM
+	}
+	if input.Priority != nil {
+		existing.Priority = *input.Priority
 	}
 
 	if err := a.store.UpdateProvider(r.Context(), name, existing); err != nil {
@@ -350,6 +382,77 @@ func (a *API) syncFromDB(ctx context.Context) {
 
 	a.balancer.UpdateProviders(providers)
 	a.health.SetProviders(config.ProviderURLs(providers))
+}
+
+// --- Agent CRUD ---
+
+func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, a.registry.List())
+	case http.MethodPost:
+		var agent a2a.AgentCard
+		if err := json.NewDecoder(r.Body).Decode(&agent); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if agent.ID == "" || agent.Name == "" || agent.URL == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id, name, and url are required"})
+			return
+		}
+		if err := a.registry.Add(r.Context(), agent); err != nil {
+			a.logger.Error("failed to add agent", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusCreated, agent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (a *API) handleAgent(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/agents/")
+	if id == "" {
+		http.Error(w, "agent id required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		agent, ok := a.registry.Get(id)
+		if !ok {
+			http.Error(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, agent)
+	case http.MethodPut:
+		var agent a2a.AgentCard
+		if err := json.NewDecoder(r.Body).Decode(&agent); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if err := a.registry.Update(r.Context(), id, agent); err != nil {
+			a.logger.Error("failed to update agent", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		agent.ID = id
+		writeJSON(w, http.StatusOK, agent)
+	case http.MethodDelete:
+		if err := a.registry.Delete(r.Context(), id); err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				http.Error(w, "agent not found", http.StatusNotFound)
+				return
+			}
+			a.logger.Error("failed to delete agent", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"deleted": id})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -4,6 +4,7 @@ import type { Provider, ProviderInput, HealthStatus } from '../api'
 
 const emptyForm: ProviderInput = {
   name: '', url: '', models: [], weight: 1, enabled: true, api_key: '', key_env: '', timeout_seconds: 60,
+  price_per_input_token: 0, price_per_output_token: 0, rate_limit_rpm: 0, priority: 10,
 }
 
 export default function Providers() {
@@ -43,6 +44,8 @@ export default function Providers() {
     setForm({
       name: p.name, url: p.url, models: p.models, weight: p.weight,
       enabled: p.enabled, api_key: '', key_env: p.key_env || '', timeout_seconds: p.timeout_seconds,
+      price_per_input_token: p.price_per_input_token, price_per_output_token: p.price_per_output_token,
+      rate_limit_rpm: p.rate_limit_rpm, priority: p.priority,
     })
     setEditingName(p.name)
     setTestResult(null)
@@ -295,6 +298,46 @@ export default function Providers() {
                 />
                 <div className="flex justify-between text-xs text-gray-400 mt-0.5">
                   <span>1</span><span>10</span>
+                </div>
+              </div>
+              {/* Pricing */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Price/Input Token ($)</label>
+                  <input type="number" step="0.000001" min={0}
+                    value={form.price_per_input_token || 0}
+                    onChange={e => setForm({ ...form, price_per_input_token: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Price/Output Token ($)</label>
+                  <input type="number" step="0.000001" min={0}
+                    value={form.price_per_output_token || 0}
+                    onChange={e => setForm({ ...form, price_per_output_token: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                  />
+                </div>
+              </div>
+              {/* Rate Limit & Priority */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Rate Limit (RPM)</label>
+                  <input type="number" min={0}
+                    value={form.rate_limit_rpm || 0}
+                    onChange={e => setForm({ ...form, rate_limit_rpm: parseInt(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                    placeholder="0 = unlimited"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
+                  <input type="number" min={1}
+                    value={form.priority || 10}
+                    onChange={e => setForm({ ...form, priority: parseInt(e.target.value) || 10 })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                    placeholder="Lower = higher priority"
+                  />
                 </div>
               </div>
               {/* Enabled toggle */}

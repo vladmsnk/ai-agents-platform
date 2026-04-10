@@ -54,6 +54,28 @@ func (c *Checker) Get(name string) (Status, bool) {
 	return s, ok
 }
 
+// IsHealthy returns whether a provider is healthy (implements balancer.HealthSource).
+func (c *Checker) IsHealthy(name string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	s, ok := c.statuses[name]
+	if !ok {
+		return true // unknown = assume healthy
+	}
+	return s.Healthy
+}
+
+// AvgLatency returns the last known latency for a provider (implements balancer.HealthSource).
+func (c *Checker) AvgLatency(name string) time.Duration {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	s, ok := c.statuses[name]
+	if !ok {
+		return 0
+	}
+	return time.Duration(s.Latency) * time.Millisecond
+}
+
 func (c *Checker) All() map[string]Status {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

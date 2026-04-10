@@ -3,10 +3,12 @@ import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import Providers from './pages/Providers'
 import Models from './pages/Models'
 import Monitoring from './pages/Monitoring'
+import Agents from './pages/Agents'
 
 const navItems = [
   { to: '/providers', label: 'Providers', icon: '⬡' },
   { to: '/models', label: 'Models', icon: '◈' },
+  { to: '/agents', label: 'Agents', icon: '◇' },
   { to: '/monitoring', label: 'Monitoring', icon: '◉' },
 ]
 
@@ -67,6 +69,7 @@ export default function App() {
         <Routes>
           <Route path="/providers" element={<Providers />} />
           <Route path="/models" element={<Models />} />
+          <Route path="/agents" element={<Agents />} />
           <Route path="/monitoring" element={<Monitoring />} />
           <Route path="*" element={<Navigate to="/providers" replace />} />
         </Routes>

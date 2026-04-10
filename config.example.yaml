@@ -1,6 +1,12 @@
 listen: ":8080"
 database_url: "postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable"
 
+# Balancer strategy: "weighted" (default), "latency", or "priority"
+balancer_strategy: "weighted"
+
+# MLflow tracking URL (empty = disabled)
+mlflow_url: "http://localhost:5000"
+
 # Providers listed here are seeded into the database on first startup.
 # Once in the DB, manage them via the API — changes here won't overwrite DB state.
 providers:
@@ -11,7 +17,11 @@ providers:
       - gpt-4o
       - gpt-4o-mini
     weight: 2
+    priority: 1
     timeout_seconds: 120
+    price_per_input_token: 0.0000025
+    price_per_output_token: 0.00001
+    rate_limit_rpm: 500
 
   - name: openai-secondary
     url: https://api.openai.com
@@ -19,7 +29,10 @@ providers:
     models:
       - gpt-4o
     weight: 1
+    priority: 2
     timeout_seconds: 120
+    price_per_input_token: 0.0000025
+    price_per_output_token: 0.00001
 
   - name: anthropic
     url: https://api.anthropic.com
@@ -27,4 +40,7 @@ providers:
     models:
       - claude-sonnet-4-20250514
     weight: 1
+    priority: 1
     timeout_seconds: 120
+    price_per_input_token: 0.000003
+    price_per_output_token: 0.000015
