@@ -29,6 +29,7 @@ export default function Models() {
         api.getProviders(),
         api.getStats().catch((): Stats => ({
           total_requests: 0, active_providers: 0, avg_latency_ms: 0, error_rate: 0,
+          total_input_tokens: 0, total_output_tokens: 0, total_cost: 0,
           by_provider: [], by_model: [], recent_errors: [], time_series: [],
         })),
       ])
