@@ -1,0 +1,6 @@
+frontend/
+monitoring/
+.git/
+.env
+*.md
+bin/

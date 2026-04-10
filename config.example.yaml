@@ -1,0 +1,30 @@
+listen: ":8080"
+database_url: "postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable"
+
+# Providers listed here are seeded into the database on first startup.
+# Once in the DB, manage them via the API — changes here won't overwrite DB state.
+providers:
+  - name: openai-primary
+    url: https://api.openai.com
+    key_env: OPENAI_API_KEY
+    models:
+      - gpt-4o
+      - gpt-4o-mini
+    weight: 2
+    timeout_seconds: 120
+
+  - name: openai-secondary
+    url: https://api.openai.com
+    key_env: OPENAI_API_KEY_2
+    models:
+      - gpt-4o
+    weight: 1
+    timeout_seconds: 120
+
+  - name: anthropic
+    url: https://api.anthropic.com
+    key_env: ANTHROPIC_API_KEY
+    models:
+      - claude-sonnet-4-20250514
+    weight: 1
+    timeout_seconds: 120
