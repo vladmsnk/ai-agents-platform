@@ -16,6 +16,13 @@ const panels = [
   { id: 8, title: 'Traffic Distribution' },
 ]
 
+const a2aPanels = [
+  { id: 21, title: 'A2A Request Rate by Agent' },
+  { id: 22, title: 'A2A Latency P95 by Agent' },
+  { id: 25, title: 'Discover & Embedding Rate' },
+  { id: 26, title: 'Agent Health Check Latency' },
+]
+
 function grafanaPanelURL(panelId: number) {
   return `${GRAFANA_URL}/d-solo/${DASHBOARD_UID}/llm-gateway?orgId=1&panelId=${panelId}&theme=light&from=now-1h&to=now&refresh=10s`
 }
@@ -215,7 +222,7 @@ export default function Monitoring() {
       </div>
 
       {/* Error feed — from /api/stats */}
-      <div className="bg-white rounded-xl border border-gray-200 p-5">
+      <div className="bg-white rounded-xl border border-gray-200 p-5 mb-8">
         <h3 className="text-sm font-semibold text-gray-700 mb-4">Recent Errors</h3>
         {(stats?.recent_errors?.length ?? 0) > 0 ? (
           <div className="space-y-2 max-h-64 overflow-auto">
@@ -239,6 +246,82 @@ export default function Monitoring() {
           </div>
         ) : (
           <div className="text-center py-8 text-gray-400 text-sm">No errors in the last 5 minutes</div>
+        )}
+      </div>
+
+      {/* ═══ A2A Agent Monitoring ═══ */}
+      <div className="border-t border-gray-200 pt-8 mb-8">
+        <h2 className="text-xl font-semibold text-gray-900 mb-6">A2A Agent Monitoring</h2>
+
+        {/* Agent KPI cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <MetricCard label="A2A Total Tasks" value={stats?.a2a_total_tasks ?? 0} />
+          <MetricCard label="A2A Error Rate" value={`${(stats?.a2a_error_rate ?? 0).toFixed(1)}%`} accent={!!stats?.a2a_error_rate && stats.a2a_error_rate > 5} />
+          <MetricCard label="A2A Avg Latency" value={`${Math.round(stats?.a2a_avg_latency_ms ?? 0)}ms`} />
+          <MetricCard label="Agents" value={stats?.by_agent?.length ?? 0} />
+        </div>
+
+        {/* A2A Grafana panels */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
+          {a2aPanels.map(panel => (
+            <div key={panel.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <iframe
+                src={grafanaPanelURL(panel.id)}
+                width="100%"
+                height="300"
+                frameBorder="0"
+                title={panel.title}
+              />
+            </div>
+          ))}
+        </div>
+
+        {/* Agent stats table */}
+        {(stats?.by_agent?.length ?? 0) > 0 && (
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <h3 className="text-sm font-semibold text-gray-700 mb-4">Agent Stats</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-gray-500 border-b border-gray-100">
+                    <th className="text-left pb-2">Agent</th>
+                    <th className="text-left pb-2">Status</th>
+                    <th className="text-right pb-2">Tasks</th>
+                    <th className="text-right pb-2">Completed</th>
+                    <th className="text-right pb-2">Failed</th>
+                    <th className="text-right pb-2">Avg Latency</th>
+                    <th className="text-right pb-2">P95</th>
+                    <th className="text-right pb-2">Avg Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats!.by_agent.map(a => (
+                    <tr key={a.name} className="border-b border-gray-50">
+                      <td className="py-2 font-medium text-gray-700 flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full ${a.status === 'active' ? 'bg-emerald-400' : a.status === 'unhealthy' ? 'bg-red-400' : 'bg-gray-300'}`} />
+                        {a.name}
+                      </td>
+                      <td className="py-2">
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                          a.status === 'active' ? 'bg-green-50 text-green-700' : a.status === 'unhealthy' ? 'bg-red-50 text-red-700' : 'bg-gray-50 text-gray-500'
+                        }`}>{a.status}</span>
+                      </td>
+                      <td className="py-2 text-right text-gray-600">{a.total_tasks}</td>
+                      <td className="py-2 text-right text-gray-600">{a.completed_tasks}</td>
+                      <td className="py-2 text-right">
+                        <span className={a.failed_tasks > 0 ? 'text-red-600 font-medium' : 'text-gray-600'}>
+                          {a.failed_tasks}
+                        </span>
+                      </td>
+                      <td className="py-2 text-right text-gray-600">{Math.round(a.avg_latency_ms)}ms</td>
+                      <td className="py-2 text-right text-gray-600">{Math.round(a.latency_p95_ms)}ms</td>
+                      <td className="py-2 text-right text-gray-600">{a.avg_score > 0 ? `${(a.avg_score * 100).toFixed(1)}%` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
       </div>
     </div>

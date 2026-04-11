@@ -23,6 +23,7 @@ export default function Models() {
           total_requests: 0, active_providers: 0, avg_latency_ms: 0, error_rate: 0,
           total_input_tokens: 0, total_output_tokens: 0, total_cost: 0,
           by_provider: [], by_model: [], recent_errors: [], time_series: [],
+          a2a_total_tasks: 0, a2a_error_rate: 0, a2a_avg_latency_ms: 0, by_agent: [],
         })),
         api.getProviders().catch(() => [] as Provider[]),
       ])

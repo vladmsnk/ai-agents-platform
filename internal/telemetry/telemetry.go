@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -40,6 +41,27 @@ type Metrics struct {
 	InputTokensTotal  otelmetric.Int64Counter
 	OutputTokensTotal otelmetric.Int64Counter
 	RequestCost       otelmetric.Float64Counter
+
+	// A2A agent metrics
+	A2ARequestsTotal    otelmetric.Int64Counter
+	A2ARequestLatency   otelmetric.Float64Histogram
+	A2ARoutingScore     otelmetric.Float64Histogram
+	A2ARoutingDuration  otelmetric.Float64Histogram
+	A2ATasksActive      otelmetric.Int64UpDownCounter
+	AgentsTotal         otelmetric.Int64ObservableGauge
+	AgentsHealthy       otelmetric.Int64ObservableGauge
+	AgentsUnhealthy     otelmetric.Int64ObservableGauge
+	AgentHealthDuration otelmetric.Float64Histogram
+	DiscoverRequests    otelmetric.Int64Counter
+	DiscoverDuration    otelmetric.Float64Histogram
+	EmbeddingRequests   otelmetric.Int64Counter
+	EmbeddingDuration   otelmetric.Float64Histogram
+
+	// Agent count callbacks (set externally)
+	agentCountsMu      sync.Mutex
+	agentCountTotal    int64
+	agentCountHealthy  int64
+	agentCountUnhealthy int64
 
 	meterProvider *sdkmetric.MeterProvider
 	traceProvider *sdktrace.TracerProvider
@@ -180,6 +202,127 @@ func Setup(jaegerURL string) (*Metrics, error) {
 		return nil, err
 	}
 
+	// A2A metrics
+	m.A2ARequestsTotal, err = meter.Int64Counter("gateway.a2a.requests.total",
+		otelmetric.WithDescription("Total A2A tasks processed"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	m.A2ARequestLatency, err = meter.Float64Histogram("gateway.a2a.request.duration",
+		otelmetric.WithDescription("A2A task latency in milliseconds"),
+		otelmetric.WithUnit("ms"),
+		otelmetric.WithExplicitBucketBoundaries(50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	m.A2ARoutingScore, err = meter.Float64Histogram("gateway.a2a.routing.score",
+		otelmetric.WithDescription("Semantic routing confidence score distribution"),
+		otelmetric.WithExplicitBucketBoundaries(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	m.A2ARoutingDuration, err = meter.Float64Histogram("gateway.a2a.routing.duration",
+		otelmetric.WithDescription("Time spent on semantic routing (embed + cosine) in ms"),
+		otelmetric.WithUnit("ms"),
+		otelmetric.WithExplicitBucketBoundaries(5, 10, 25, 50, 100, 250, 500, 1000),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	m.A2ATasksActive, err = meter.Int64UpDownCounter("gateway.a2a.tasks.active",
+		otelmetric.WithDescription("Number of in-flight A2A tasks"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	m.AgentsTotal, err = meter.Int64ObservableGauge("gateway.agents.total",
+		otelmetric.WithDescription("Total registered agents"),
+		otelmetric.WithInt64Callback(func(_ context.Context, o otelmetric.Int64Observer) error {
+			m.agentCountsMu.Lock()
+			o.Observe(m.agentCountTotal)
+			m.agentCountsMu.Unlock()
+			return nil
+		}),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	m.AgentsHealthy, err = meter.Int64ObservableGauge("gateway.agents.healthy",
+		otelmetric.WithDescription("Number of healthy agents"),
+		otelmetric.WithInt64Callback(func(_ context.Context, o otelmetric.Int64Observer) error {
+			m.agentCountsMu.Lock()
+			o.Observe(m.agentCountHealthy)
+			m.agentCountsMu.Unlock()
+			return nil
+		}),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	m.AgentsUnhealthy, err = meter.Int64ObservableGauge("gateway.agents.unhealthy",
+		otelmetric.WithDescription("Number of unhealthy agents"),
+		otelmetric.WithInt64Callback(func(_ context.Context, o otelmetric.Int64Observer) error {
+			m.agentCountsMu.Lock()
+			o.Observe(m.agentCountUnhealthy)
+			m.agentCountsMu.Unlock()
+			return nil
+		}),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	m.AgentHealthDuration, err = meter.Float64Histogram("gateway.agent.health.duration",
+		otelmetric.WithDescription("Agent health check ping latency in ms"),
+		otelmetric.WithUnit("ms"),
+		otelmetric.WithExplicitBucketBoundaries(5, 10, 25, 50, 100, 250, 500, 1000, 5000),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	m.DiscoverRequests, err = meter.Int64Counter("gateway.discover.requests",
+		otelmetric.WithDescription("Total semantic discover requests"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	m.DiscoverDuration, err = meter.Float64Histogram("gateway.discover.duration",
+		otelmetric.WithDescription("Discover endpoint latency in ms"),
+		otelmetric.WithUnit("ms"),
+		otelmetric.WithExplicitBucketBoundaries(10, 25, 50, 100, 250, 500, 1000, 2500),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	m.EmbeddingRequests, err = meter.Int64Counter("gateway.embeddings.requests",
+		otelmetric.WithDescription("Total embedding requests"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	m.EmbeddingDuration, err = meter.Float64Histogram("gateway.embeddings.duration",
+		otelmetric.WithDescription("Embedding request latency in ms"),
+		otelmetric.WithUnit("ms"),
+		otelmetric.WithExplicitBucketBoundaries(10, 25, 50, 100, 250, 500, 1000, 2500),
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	return m, nil
 }
 
@@ -228,6 +371,60 @@ func (m *Metrics) RecordTPOT(ctx context.Context, provider, model string, tpot t
 
 func (m *Metrics) TrackInflight(ctx context.Context, delta int64) {
 	m.ActiveRequests.Add(ctx, delta)
+}
+
+// --- A2A recording methods ---
+
+func (m *Metrics) RecordA2ARequest(ctx context.Context, agent, method, routingType string, latency time.Duration, isError bool) {
+	attrs := otelmetric.WithAttributes(
+		attribute.String("agent", agent),
+		attribute.String("method", method),
+		attribute.String("routing_type", routingType),
+		attribute.Bool("error", isError),
+	)
+	m.A2ARequestsTotal.Add(ctx, 1, attrs)
+	m.A2ARequestLatency.Record(ctx, float64(latency.Milliseconds()), attrs)
+}
+
+func (m *Metrics) RecordA2ARouting(ctx context.Context, agent string, score float64, routingDuration time.Duration) {
+	m.A2ARoutingScore.Record(ctx, score, otelmetric.WithAttributes(attribute.String("agent", agent)))
+	m.A2ARoutingDuration.Record(ctx, float64(routingDuration.Milliseconds()))
+}
+
+func (m *Metrics) TrackA2AInflight(ctx context.Context, delta int64) {
+	m.A2ATasksActive.Add(ctx, delta)
+}
+
+func (m *Metrics) RecordDiscover(ctx context.Context, topResult string, latency time.Duration) {
+	m.DiscoverRequests.Add(ctx, 1, otelmetric.WithAttributes(attribute.String("top_result", topResult)))
+	m.DiscoverDuration.Record(ctx, float64(latency.Milliseconds()))
+}
+
+func (m *Metrics) RecordEmbedding(ctx context.Context, model, provider string, statusCode int, latency time.Duration) {
+	attrs := otelmetric.WithAttributes(
+		attribute.String("model", model),
+		attribute.String("provider", provider),
+		attribute.Int("status_code", statusCode),
+	)
+	m.EmbeddingRequests.Add(ctx, 1, attrs)
+	m.EmbeddingDuration.Record(ctx, float64(latency.Milliseconds()), attrs)
+}
+
+func (m *Metrics) RecordAgentHealth(ctx context.Context, agent string, healthy bool, latency time.Duration) {
+	m.AgentHealthDuration.Record(ctx, float64(latency.Milliseconds()),
+		otelmetric.WithAttributes(
+			attribute.String("agent", agent),
+			attribute.Bool("healthy", healthy),
+		),
+	)
+}
+
+func (m *Metrics) SetAgentCounts(total, healthy, unhealthy int) {
+	m.agentCountsMu.Lock()
+	m.agentCountTotal = int64(total)
+	m.agentCountHealthy = int64(healthy)
+	m.agentCountUnhealthy = int64(unhealthy)
+	m.agentCountsMu.Unlock()
 }
 
 func (m *Metrics) Shutdown(ctx context.Context) error {

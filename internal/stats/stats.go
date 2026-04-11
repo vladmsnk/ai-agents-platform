@@ -21,11 +21,22 @@ type RequestRecord struct {
 	TTFT         time.Duration
 }
 
+type A2ARecord struct {
+	Agent       string
+	Method      string
+	RoutingType string // "auto" or "explicit"
+	Status      string // "completed", "failed", etc.
+	Latency     time.Duration
+	Score       float64
+	Timestamp   time.Time
+}
+
 type Collector struct {
-	mu      sync.RWMutex
-	records []RequestRecord
-	maxAge  time.Duration
-	stop    chan struct{}
+	mu         sync.RWMutex
+	records    []RequestRecord
+	a2aRecords []A2ARecord
+	maxAge     time.Duration
+	stop       chan struct{}
 }
 
 func NewCollector() *Collector {
@@ -41,6 +52,13 @@ func (c *Collector) Record(r RequestRecord) {
 	r.Timestamp = time.Now()
 	c.mu.Lock()
 	c.records = append(c.records, r)
+	c.mu.Unlock()
+}
+
+func (c *Collector) RecordA2A(r A2ARecord) {
+	r.Timestamp = time.Now()
+	c.mu.Lock()
+	c.a2aRecords = append(c.a2aRecords, r)
 	c.mu.Unlock()
 }
 
@@ -73,6 +91,15 @@ func (c *Collector) cleanup() {
 		}
 	}
 	c.records = c.records[:i]
+
+	j := 0
+	for _, r := range c.a2aRecords {
+		if r.Timestamp.After(cutoff) {
+			c.a2aRecords[j] = r
+			j++
+		}
+	}
+	c.a2aRecords = c.a2aRecords[:j]
 }
 
 type ProviderStats struct {
@@ -120,18 +147,35 @@ type ErrorEntry struct {
 	Timestamp string `json:"timestamp"`
 }
 
+type AgentStats struct {
+	Name           string  `json:"name"`
+	TotalTasks     int     `json:"total_tasks"`
+	CompletedTasks int     `json:"completed_tasks"`
+	FailedTasks    int     `json:"failed_tasks"`
+	AvgLatencyMs   float64 `json:"avg_latency_ms"`
+	LatencyP95Ms   float64 `json:"latency_p95_ms"`
+	AvgScore       float64 `json:"avg_score"`
+	Status         string  `json:"status"`
+}
+
 type Snapshot struct {
-	TotalRequests    int                    `json:"total_requests"`
-	ActiveProviders  int                    `json:"active_providers"`
-	AvgLatencyMs     float64                `json:"avg_latency_ms"`
-	ErrorRate        float64                `json:"error_rate"`
-	TotalInputTokens  int                   `json:"total_input_tokens"`
-	TotalOutputTokens int                   `json:"total_output_tokens"`
-	TotalCost        float64                `json:"total_cost"`
-	ByProvider       []ProviderStats        `json:"by_provider"`
-	ByModel          []ModelStats           `json:"by_model"`
-	RecentErrors     []ErrorEntry           `json:"recent_errors"`
-	TimeSeries       []TimeSeriesPoint      `json:"time_series"`
+	TotalRequests     int               `json:"total_requests"`
+	ActiveProviders   int               `json:"active_providers"`
+	AvgLatencyMs      float64           `json:"avg_latency_ms"`
+	ErrorRate         float64           `json:"error_rate"`
+	TotalInputTokens  int               `json:"total_input_tokens"`
+	TotalOutputTokens int               `json:"total_output_tokens"`
+	TotalCost         float64           `json:"total_cost"`
+	ByProvider        []ProviderStats   `json:"by_provider"`
+	ByModel           []ModelStats      `json:"by_model"`
+	RecentErrors      []ErrorEntry      `json:"recent_errors"`
+	TimeSeries        []TimeSeriesPoint `json:"time_series"`
+
+	// A2A stats
+	A2ATotalTasks   int          `json:"a2a_total_tasks"`
+	A2AErrorRate    float64      `json:"a2a_error_rate"`
+	A2AAvgLatencyMs float64     `json:"a2a_avg_latency_ms"`
+	ByAgent         []AgentStats `json:"by_agent"`
 }
 
 type TimeSeriesPoint struct {
@@ -145,6 +189,8 @@ func (c *Collector) Snapshot() Snapshot {
 	c.cleanup()
 	records := make([]RequestRecord, len(c.records))
 	copy(records, c.records)
+	a2aRecordsCopy := make([]A2ARecord, len(c.a2aRecords))
+	copy(a2aRecordsCopy, c.a2aRecords)
 	c.mu.Unlock()
 
 	snap := Snapshot{}
@@ -298,6 +344,59 @@ func (c *Collector) Snapshot() Snapshot {
 
 	// Time series — 10-second buckets for the last 5 minutes
 	snap.TimeSeries = buildTimeSeries(records, 10*time.Second)
+
+	// A2A stats
+	a2aRecords := a2aRecordsCopy
+	snap.A2ATotalTasks = len(a2aRecords)
+	if len(a2aRecords) > 0 {
+		agentMap := map[string][]A2ARecord{}
+		var a2aErrors int
+		var a2aLatSum float64
+		for _, r := range a2aRecords {
+			agentMap[r.Agent] = append(agentMap[r.Agent], r)
+			a2aLatSum += float64(r.Latency.Milliseconds())
+			if r.Status == "failed" {
+				a2aErrors++
+			}
+		}
+		snap.A2AErrorRate = float64(a2aErrors) / float64(len(a2aRecords)) * 100
+		snap.A2AAvgLatencyMs = a2aLatSum / float64(len(a2aRecords))
+
+		for name, recs := range agentMap {
+			as := AgentStats{Name: name, TotalTasks: len(recs)}
+			var latencies []float64
+			var scoreSum float64
+			var scoreCount int
+			for _, r := range recs {
+				latencies = append(latencies, float64(r.Latency.Milliseconds()))
+				if r.Status == "completed" {
+					as.CompletedTasks++
+				} else if r.Status == "failed" {
+					as.FailedTasks++
+				}
+				if r.Score > 0 {
+					scoreSum += r.Score
+					scoreCount++
+				}
+			}
+			if len(latencies) > 0 {
+				var sum float64
+				for _, l := range latencies {
+					sum += l
+				}
+				as.AvgLatencyMs = sum / float64(len(latencies))
+				sort.Float64s(latencies)
+				as.LatencyP95Ms = percentile(latencies, 0.95)
+			}
+			if scoreCount > 0 {
+				as.AvgScore = scoreSum / float64(scoreCount)
+			}
+			snap.ByAgent = append(snap.ByAgent, as)
+		}
+		sort.Slice(snap.ByAgent, func(i, j int) bool {
+			return snap.ByAgent[i].Name < snap.ByAgent[j].Name
+		})
+	}
 
 	return snap
 }
