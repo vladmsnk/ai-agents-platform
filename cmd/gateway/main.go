@@ -151,7 +151,7 @@ func main() {
 	a2aHandler := a2a.NewHandler(registry, logger, selfCard, metrics, collector)
 
 	p := proxy.New(b, logger, collector, metrics)
-	mgmt := api.New(store, b, checker, collector, registry, logger, cfg.GatewayURL)
+	mgmt := api.New(store, b, checker, collector, registry, logger, cfg.GatewayURL, metrics)
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/chat/completions", p)

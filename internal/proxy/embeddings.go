@@ -73,6 +73,7 @@ func (p *Proxy) serveEmbeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	ctx, span := p.tracer.Start(r.Context(), "llm.embedding",
 		trace.WithAttributes(
 			attribute.String("llm.model", req.Model),
@@ -81,19 +82,26 @@ func (p *Proxy) serveEmbeddings(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 	r = r.WithContext(ctx)
 
+	recordEmbedding := func(provider string, status int) {
+		if p.metrics != nil {
+			p.metrics.RecordEmbedding(ctx, req.Model, provider, status, time.Since(start))
+		}
+	}
+
 	// Try to find a provider that supports this model
 	primary, fallbacks, ok := p.balancer.Next(req.Model)
 	if !ok {
-		// No provider for this model — use mock embeddings
 		p.logger.Info("no provider for embedding model, using mock", "model", req.Model)
 		p.serveMockEmbedding(w, req)
-		span.SetAttributes(attribute.String("llm.provider.primary", "mock"))
+		span.SetAttributes(attribute.String("llm.provider.primary", "mock"), attribute.Bool("llm.embedding.mock", true))
+		recordEmbedding("mock", 200)
 		return
 	}
 
 	span.SetAttributes(attribute.String("llm.provider.primary", primary.Name))
 
 	if p.tryEmbedding(w, r, primary, body, req.Model) {
+		recordEmbedding(primary.Name, 200)
 		return
 	}
 
@@ -105,6 +113,7 @@ func (p *Proxy) serveEmbeddings(w http.ResponseWriter, r *http.Request) {
 		)
 		span.AddEvent("fallback", trace.WithAttributes(attribute.String("provider", fb.Name)))
 		if p.tryEmbedding(w, r, fb, body, req.Model) {
+			recordEmbedding(fb.Name, 200)
 			return
 		}
 	}
@@ -112,6 +121,8 @@ func (p *Proxy) serveEmbeddings(w http.ResponseWriter, r *http.Request) {
 	// All providers failed — fall back to mock
 	p.logger.Warn("all embedding providers failed, using mock", "model", req.Model)
 	p.serveMockEmbedding(w, req)
+	span.SetAttributes(attribute.Bool("llm.embedding.mock", true))
+	recordEmbedding("mock-fallback", 200)
 }
 
 func (p *Proxy) tryEmbedding(w http.ResponseWriter, origReq *http.Request, provider config.Provider, body []byte, model string) bool {
