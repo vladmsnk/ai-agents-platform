@@ -303,12 +303,12 @@
       },
       "targets": [
         {
-          "expr": "rate(gateway_discover_requests_total[1m])",
+          "expr": "sum(rate(gateway_discover_requests_total[1m]))",
           "legendFormat": "discover",
           "refId": "A"
         },
         {
-          "expr": "rate(gateway_embeddings_requests_total[1m])",
+          "expr": "sum(rate(gateway_embeddings_requests_total[1m]))",
           "legendFormat": "embeddings",
           "refId": "B"
         }

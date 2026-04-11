@@ -64,6 +64,9 @@ func (r *Registry) List() []AgentCard {
 	for _, a := range r.agents {
 		result = append(result, a)
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
 	return result
 }
 

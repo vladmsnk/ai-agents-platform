@@ -52,7 +52,35 @@ export default function Models() {
     return <div className="p-8 text-gray-400">Loading...</div>
   }
 
-  const models = stats?.by_model || []
+  // Merge models from stats (have traffic) with models from providers (may have no traffic yet)
+  const statsModels = stats?.by_model || []
+  const statsModelNames = new Set(statsModels.map(m => m.name))
+
+  // Collect all models from providers that aren't already in stats
+  const allProviderModels: { name: string; providers: { name: string }[] }[] = []
+  const providerModelMap = new Map<string, string[]>()
+  for (const p of providers) {
+    for (const m of p.models || []) {
+      if (!providerModelMap.has(m)) providerModelMap.set(m, [])
+      providerModelMap.get(m)!.push(p.name)
+    }
+  }
+  for (const [modelName, provNames] of providerModelMap) {
+    if (!statsModelNames.has(modelName)) {
+      allProviderModels.push({ name: modelName, providers: provNames.map(n => ({ name: n })) })
+    }
+  }
+
+  const models = [
+    ...statsModels,
+    ...allProviderModels.map(m => ({
+      name: m.name,
+      total_requests: 0, rpm: 0, error_count: 0, error_rate: 0,
+      avg_latency_ms: 0, latency_p95_ms: 0,
+      total_input_tokens: 0, total_output_tokens: 0, total_cost: 0, avg_ttft_ms: 0,
+      providers: m.providers.map(p => ({ name: p.name, total_requests: 0, error_rate: 0, avg_latency_ms: 0, traffic_share: 0 })),
+    })),
+  ]
 
   if (models.length === 0) {
     return (
