@@ -45,48 +45,12 @@ Proxy OpenAI-compatible requests to multiple LLM providers with load balancing, 
 
 ```mermaid
 flowchart LR
-    Client([Client / UI :8080])
-
-    subgraph GW [Gateway]
-        direction TB
-        LLM["/v1/chat · /v1/embeddings"]
-        A2A["/a2a · /a2a/agent-id"]
-        Discover["/api/agents/discover"]
-        LB["Balancer · Circuit Breaker\nRate Limiter · Health Check"]
-        LLM --- LB
-    end
-
-    subgraph Providers [LLM Providers]
-        OR[OpenRouter]
-        OA[OpenAI]
-        AN[Anthropic]
-    end
-
-    subgraph Agents [A2A Agents]
-        direction TB
-        T[translator] ~~~ S[summarizer]
-        CR[code-reviewer] ~~~ SA[sentiment-analyzer]
-        DE[data-extractor] ~~~ CW[content-writer]
-        MS[math-solver] ~~~ SS[security-scanner]
-    end
-
-    DB[(PostgreSQL)]
-
-    subgraph Obs [Observability]
-        direction LR
-        P[Prometheus :9090] --> G[Grafana :3000]
-        J[Jaeger :16686]
-    end
-
-    Client --> GW
-    LB --> Providers
-    A2A -- "message/send" --> Agents
-    Discover -- "cosine similarity" --> A2A
-    Agents -. "/v1/chat\n(LLM calls)" .-> LLM
-    Agents -. "/api/agents/discover\n(delegation)" .-> Discover
-    GW --> DB
-    GW -. "metrics" .-> P
-    GW -. "traces" .-> J
+    Client([Client / UI]) --> GW
+    GW[**Gateway**\nProxy · Balancer · A2A Router\nAgent Registry · Health Check] --> LLM[LLM Providers\nOpenRouter · OpenAI · Anthropic]
+    GW -- "semantic\nrouting" --> Agents[A2A Agents\n8 registered agents]
+    Agents -. "LLM calls +\ndiscovery" .-> GW
+    GW --> DB[(PostgreSQL)]
+    GW -. metrics .-> Obs[Prometheus → Grafana\nJaeger Tracing]
 ```
 
 ## Quick Start
