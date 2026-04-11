@@ -44,53 +44,49 @@ Proxy OpenAI-compatible requests to multiple LLM providers with load balancing, 
 ## Architecture
 
 ```mermaid
-graph TB
-    subgraph UI["Admin UI :8080"]
-        Frontend["Frontend<br/>React + Tailwind"]
+flowchart LR
+    Client([Client / UI :8080])
+
+    subgraph GW [Gateway]
+        direction TB
+        LLM["/v1/chat · /v1/embeddings"]
+        A2A["/a2a · /a2a/agent-id"]
+        Discover["/api/agents/discover"]
+        LB["Balancer · Circuit Breaker\nRate Limiter · Health Check"]
+        LLM --- LB
     end
 
-    subgraph Gateway["Gateway (Go)"]
-        Proxy["/v1/chat/completions<br/>/v1/embeddings"]
-        A2AProxy["/a2a — A2A Proxy<br/>auto-route · explicit route"]
-        Registry["Agent Registry<br/>semantic discovery"]
-        Balancer["Balancer · Circuit Breaker<br/>Rate Limiter · Health Checker"]
+    subgraph Providers [LLM Providers]
+        OR[OpenRouter]
+        OA[OpenAI]
+        AN[Anthropic]
     end
 
-    subgraph Providers["LLM Providers"]
-        OpenRouter["OpenRouter"]
-        Other["OpenAI / Anthropic / ..."]
+    subgraph Agents [A2A Agents]
+        direction TB
+        T[translator] ~~~ S[summarizer]
+        CR[code-reviewer] ~~~ SA[sentiment-analyzer]
+        DE[data-extractor] ~~~ CW[content-writer]
+        MS[math-solver] ~~~ SS[security-scanner]
     end
 
-    subgraph Agents["A2A Agents"]
-        A1["translator"]
-        A2["summarizer"]
-        A3["code-reviewer"]
-        AN["+ 5 more agents"]
+    DB[(PostgreSQL)]
+
+    subgraph Obs [Observability]
+        direction LR
+        P[Prometheus :9090] --> G[Grafana :3000]
+        J[Jaeger :16686]
     end
 
-    subgraph Observability
-        Prometheus["Prometheus :9090"]
-        Grafana["Grafana :3000"]
-        Jaeger["Jaeger :16686"]
-    end
-
-    DB[("PostgreSQL :5432")]
-
-    Frontend -->|nginx proxy| Gateway
-    Proxy -->|load balanced| Providers
-    A2AProxy -->|"message/send"| Agents
-    Registry -->|"cosine similarity"| A2AProxy
-    Balancer --> Proxy
-    Gateway --> DB
-    Gateway -->|metrics| Prometheus
-    Prometheus --> Grafana
-    Gateway -->|traces| Jaeger
-    Agents -->|"/v1/chat/completions"| Proxy
-    Agents -->|"/api/agents/discover"| Registry
-
-    style Gateway fill:#1e293b,stroke:#334155,color:#fff
-    style UI fill:#2563eb,stroke:#1d4ed8,color:#fff
-    style Observability fill:#059669,stroke:#047857,color:#fff
+    Client --> GW
+    LB --> Providers
+    A2A -- "message/send" --> Agents
+    Discover -- "cosine similarity" --> A2A
+    Agents -. "/v1/chat\n(LLM calls)" .-> LLM
+    Agents -. "/api/agents/discover\n(delegation)" .-> Discover
+    GW --> DB
+    GW -. "metrics" .-> P
+    GW -. "traces" .-> J
 ```
 
 ## Quick Start
