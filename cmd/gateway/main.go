@@ -13,7 +13,6 @@ import (
 	"github.com/vymoiseenkov/ai-agents-platform/internal/balancer"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/config"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/health"
-	"github.com/vymoiseenkov/ai-agents-platform/internal/mlflow"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/proxy"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/ratelimit"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/stats"
@@ -40,11 +39,14 @@ func main() {
 		"balancer_strategy", cfg.BalancerStrategy,
 	)
 
-	// OpenTelemetry metrics
-	metrics, err := telemetry.Setup()
+	// OpenTelemetry metrics + tracing
+	metrics, err := telemetry.Setup(cfg.JaegerURL)
 	if err != nil {
 		logger.Error("failed to setup telemetry", "error", err)
 		os.Exit(1)
+	}
+	if cfg.JaegerURL != "" {
+		logger.Info("distributed tracing enabled", "jaeger", cfg.JaegerURL)
 	}
 	defer metrics.Shutdown(context.Background())
 
@@ -65,11 +67,14 @@ func main() {
 		}
 	}
 
-	// Load providers from DB
+	// Load providers from DB and resolve env-based keys
 	providers, err := store.ListProviders(ctx)
 	if err != nil {
 		logger.Error("failed to load providers from db", "error", err)
 		os.Exit(1)
+	}
+	for i := range providers {
+		config.ApplyDefaults(&providers[i])
 	}
 	logger.Info("loaded providers from database", "count", len(providers))
 
@@ -111,29 +116,24 @@ func main() {
 		logger.Info("registered model", "model", m)
 	}
 
-	// MLflow tracing
-	ml := mlflow.New(cfg.MlflowURL, logger)
-	if ml != nil {
-		if err := ml.EnsureExperiment("llm-gateway"); err != nil {
-			logger.Warn("mlflow: failed to ensure experiment, tracing disabled", "error", err)
-			ml = nil
-		} else {
-			logger.Info("mlflow tracing enabled", "url", cfg.MlflowURL)
-		}
-	}
-
-	// A2A Agent Registry
-	registry := a2a.NewRegistry(store)
+	// A2A Agent Registry with semantic search
+	embedder := a2a.NewEmbedder(cfg.GatewayURL, cfg.EmbeddingModel)
+	registry := a2a.NewRegistry(store, embedder, logger)
 	if err := registry.LoadFromDB(ctx); err != nil {
 		logger.Error("failed to load agents from db", "error", err)
 		os.Exit(1)
 	}
 	logger.Info("loaded agents from database", "count", len(registry.List()))
 
+	// Agent health checker
+	agentHealth := a2a.NewAgentHealthChecker(registry, logger)
+	agentHealth.Start()
+	defer agentHealth.Stop()
+
 	selfCard := a2a.AgentCard{
 		ID:          "llm-gateway",
 		Name:        "LLM Gateway",
-		Description: "AI Agents Platform — multi-provider LLM gateway with load balancing",
+		Description: "AI Agents Platform — multi-provider LLM gateway with semantic agent routing and load balancing",
 		URL:         "http://localhost" + cfg.Listen,
 		Version:     "1.0.0",
 		Capabilities: a2a.Capabilities{
@@ -141,16 +141,21 @@ func main() {
 			PushNotifications:      false,
 			StateTransitionHistory: false,
 		},
+		Skills: []a2a.Skill{
+			{ID: "route", Name: "Smart Routing", Description: "Routes tasks to the best matching agent using semantic search"},
+			{ID: "llm-proxy", Name: "LLM Proxy", Description: "Proxies chat completions and embeddings to multiple LLM providers"},
+		},
 		DefaultInputModes:  []string{"text"},
 		DefaultOutputModes: []string{"text"},
 	}
 	a2aHandler := a2a.NewHandler(registry, logger, selfCard)
 
-	p := proxy.New(b, logger, collector, metrics, ml)
-	mgmt := api.New(store, b, checker, collector, registry, logger)
+	p := proxy.New(b, logger, collector, metrics)
+	mgmt := api.New(store, b, checker, collector, registry, logger, cfg.GatewayURL)
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/chat/completions", p)
+	mux.Handle("/v1/embeddings", p.EmbeddingsHandler())
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))

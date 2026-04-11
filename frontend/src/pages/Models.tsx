@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api'
-import type { Stats } from '../api'
+import type { Stats, Provider } from '../api'
+import MetricCard from '../components/MetricCard'
 
 const COLORS = [
   { dot: 'bg-blue-500', text: 'text-blue-600', bar: 'bg-blue-500' },
@@ -10,57 +11,23 @@ const COLORS = [
   { dot: 'bg-rose-500', text: 'text-rose-600', bar: 'bg-rose-500' },
 ]
 
-interface ModelInfo {
-  name: string
-  providers: { name: string; weight: number; enabled: boolean }[]
-}
-
 export default function Models() {
-  const [models, setModels] = useState<ModelInfo[]>([])
-  const [weights, setWeights] = useState<Record<string, Record<string, number>>>({})
-  const [initialWeights, setInitialWeights] = useState<Record<string, Record<string, number>>>({})
-  const [modelRPM, setModelRPM] = useState<Record<string, number>>({})
+  const [stats, setStats] = useState<Stats | null>(null)
+  const [providers, setProviders] = useState<Provider[]>([])
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
     try {
-      const [providers, stats] = await Promise.all([
-        api.getProviders(),
+      const [statsData, provData] = await Promise.all([
         api.getStats().catch((): Stats => ({
           total_requests: 0, active_providers: 0, avg_latency_ms: 0, error_rate: 0,
           total_input_tokens: 0, total_output_tokens: 0, total_cost: 0,
           by_provider: [], by_model: [], recent_errors: [], time_series: [],
         })),
+        api.getProviders().catch(() => [] as Provider[]),
       ])
-
-      const modelMap: Record<string, ModelInfo['providers']> = {}
-      for (const p of providers || []) {
-        for (const m of p.models) {
-          if (!modelMap[m]) modelMap[m] = []
-          modelMap[m].push({ name: p.name, weight: p.weight, enabled: p.enabled })
-        }
-      }
-      const modelList = Object.entries(modelMap)
-        .map(([name, providers]) => ({ name, providers }))
-        .sort((a, b) => a.name.localeCompare(b.name))
-      setModels(modelList)
-
-      const w: Record<string, Record<string, number>> = {}
-      for (const m of modelList) {
-        w[m.name] = {}
-        for (const p of m.providers) {
-          w[m.name][p.name] = p.weight
-        }
-      }
-      setWeights(w)
-      setInitialWeights(JSON.parse(JSON.stringify(w)))
-
-      const rpm: Record<string, number> = {}
-      for (const ms of stats.by_model || []) {
-        rpm[ms.name] = ms.rpm
-      }
-      setModelRPM(rpm)
+      setStats(statsData)
+      setProviders(provData)
     } catch (e) {
       console.error('Failed to fetch:', e)
     } finally {
@@ -68,44 +35,23 @@ export default function Models() {
     }
   }, [])
 
-  useEffect(() => { fetchData() }, [fetchData])
+  useEffect(() => {
+    fetchData()
+    const interval = setInterval(fetchData, 5000)
+    return () => clearInterval(interval)
+  }, [fetchData])
 
-  const totalWeight = (modelName: string) =>
-    Object.values(weights[modelName] || {}).reduce((s, v) => s + v, 0)
-
-  const hasChanged = (modelName: string) => {
-    const curr = weights[modelName] || {}
-    const init = initialWeights[modelName] || {}
-    return Object.keys(curr).some(k => curr[k] !== init[k])
-  }
-
-  const applyWeights = async (modelName: string) => {
-    setSaving(modelName)
-    try {
-      const modelWeights = weights[modelName] || {}
-      await Promise.all(
-        Object.entries(modelWeights).map(([provName, w]) =>
-          api.updateProvider(provName, { weight: w })
-        )
-      )
-      fetchData()
-    } catch (e: any) {
-      alert(e.message)
-    } finally {
-      setSaving(null)
-    }
-  }
-
-  const setWeight = (model: string, provider: string, value: number) => {
-    setWeights(prev => ({
-      ...prev,
-      [model]: { ...prev[model], [provider]: value },
-    }))
-  }
+  const providerHealth = useCallback((provName: string) => {
+    const p = providers.find(pr => pr.name === provName)
+    if (!p || !p.health) return 'bg-gray-300'
+    return p.health.healthy ? 'bg-emerald-400' : 'bg-red-400'
+  }, [providers])
 
   if (loading) {
     return <div className="p-8 text-gray-400">Loading...</div>
   }
+
+  const models = stats?.by_model || []
 
   if (models.length === 0) {
     return (
@@ -117,109 +63,123 @@ export default function Models() {
     )
   }
 
+  const totalRequests = models.reduce((s, m) => s + m.total_requests, 0)
+  const totalCost = models.reduce((s, m) => s + m.total_cost, 0)
+  const weightedErrorRate = totalRequests > 0
+    ? models.reduce((s, m) => s + m.error_rate * m.total_requests, 0) / totalRequests
+    : 0
+
   return (
-    <div className="p-8 max-w-2xl">
+    <div className="p-8 max-w-4xl">
       <h1 className="text-2xl font-semibold text-gray-900 mb-6">Models</h1>
+
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <MetricCard label="Total Models" value={models.length} />
+        <MetricCard label="Total Requests" value={totalRequests.toLocaleString()} />
+        <MetricCard label="Avg Error Rate" value={`${weightedErrorRate.toFixed(1)}%`} accent={weightedErrorRate > 5} />
+        <MetricCard label="Total Cost" value={`$${totalCost.toFixed(4)}`} />
+      </div>
+
+
       <div className="space-y-4">
         {models.map(model => {
-          const tw = totalWeight(model.name)
-          const isSingle = model.providers.length === 1
-          const changed = hasChanged(model.name)
-          const rpm = modelRPM[model.name]
+          const modelProviders = model.providers || []
+          const isSingle = modelProviders.length <= 1
 
           return (
             <div key={model.name} className="bg-white rounded-xl border border-gray-200 p-5">
-              {/* Header */}
+
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-3">
                   <h3 className="text-lg font-semibold text-gray-900 font-mono">{model.name}</h3>
                   <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full text-xs font-medium">
-                    {model.providers.length} provider{model.providers.length > 1 ? 's' : ''}
+                    {modelProviders.length} provider{modelProviders.length !== 1 ? 's' : ''}
                   </span>
                 </div>
-                {rpm !== undefined && (
-                  <span className="text-sm text-gray-400">{Math.round(rpm)} req/min</span>
+                {model.rpm > 0 && (
+                  <span className="text-sm text-gray-400">{Math.round(model.rpm)} req/min</span>
                 )}
               </div>
 
-              {/* Distribution bar */}
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                <StatChip label="Requests" value={model.total_requests.toLocaleString()} />
+                <StatChip
+                  label="Avg Latency"
+                  value={`${Math.round(model.avg_latency_ms)}ms`}
+                  sub={`p95: ${Math.round(model.latency_p95_ms)}ms`}
+                />
+                <StatChip
+                  label="Error Rate"
+                  value={`${model.error_rate.toFixed(1)}%`}
+                  accent={model.error_rate > 5}
+                />
+                <StatChip label="Cost" value={`$${model.total_cost.toFixed(4)}`} />
+              </div>
+
+
               <div className="h-2.5 rounded-full overflow-hidden flex mb-4 bg-gray-100">
-                {model.providers.map((p, i) => {
-                  const w = weights[model.name]?.[p.name] || p.weight
-                  const pct = tw > 0 ? (w / tw) * 100 : 0
+                {modelProviders.map((p, i) => {
                   const c = COLORS[i % COLORS.length]
                   return (
                     <div
                       key={p.name}
                       className={`${c.bar} transition-all duration-300`}
-                      style={{ width: `${pct}%` }}
+                      style={{ width: `${p.traffic_share}%` }}
                     />
                   )
                 })}
               </div>
 
+
               {isSingle ? (
-                /* Single provider — no balancing */
                 <div className="flex items-center gap-2.5 py-1">
-                  <span className={`w-2.5 h-2.5 rounded-full ${COLORS[0].dot}`} />
-                  <span className="text-sm font-medium text-gray-700">{model.providers[0].name}</span>
-                  <span className="text-sm text-gray-400 ml-auto">Single provider — no balancing</span>
+                  <span className={`w-2.5 h-2.5 rounded-full ${providerHealth(modelProviders[0]?.name || '')}`} />
+                  <span className="text-sm font-medium text-gray-700">{modelProviders[0]?.name}</span>
+                  <span className="text-sm text-gray-400 ml-auto">Single provider</span>
+                  <span className="text-xs text-gray-400">
+                    {Math.round(modelProviders[0]?.avg_latency_ms || 0)}ms
+                  </span>
                   <span className={`text-sm font-semibold ${COLORS[0].text}`}>100%</span>
                 </div>
               ) : (
-                <>
-                  {/* Provider rows */}
-                  <div className="space-y-2.5">
-                    {model.providers.map((p, i) => {
-                      const w = weights[model.name]?.[p.name] || p.weight
-                      const pct = tw > 0 ? Math.round((w / tw) * 100) : 0
-                      const c = COLORS[i % COLORS.length]
-                      return (
-                        <div key={p.name} className="flex items-center gap-3">
-                          <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${c.dot}`} />
-                          <span className="text-sm font-medium text-gray-700 w-40 shrink-0">{p.name}</span>
-                          <input
-                            type="range"
-                            min={1}
-                            max={10}
-                            value={w}
-                            onChange={e => setWeight(model.name, p.name, parseInt(e.target.value))}
-                            className="flex-1 accent-gray-400 h-1.5"
-                          />
-                          <span className="text-sm text-gray-500 w-5 text-right tabular-nums">{w}</span>
-                          <span className={`text-sm font-semibold w-10 text-right tabular-nums ${c.text}`}>{pct}%</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-
-                  {/* Footer: distribution preview + apply */}
-                  <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
-                    <p className="text-xs text-gray-400">
-                      ~{model.providers.map((p, i) => {
-                        const w = weights[model.name]?.[p.name] || p.weight
-                        const pct = tw > 0 ? Math.round((w / tw) * 100) : 0
-                        return <span key={p.name}>{i > 0 ? ', ~' : ''}{pct} of 100 requests → {p.name}</span>
-                      })}
-                    </p>
-                    <button
-                      onClick={() => applyWeights(model.name)}
-                      disabled={saving === model.name || !changed}
-                      className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors shrink-0 ml-4 ${
-                        changed
-                          ? 'bg-primary-600 text-white hover:bg-primary-700'
-                          : 'border border-gray-200 text-gray-400 cursor-default'
-                      } disabled:opacity-50`}
-                    >
-                      {saving === model.name ? 'Applying...' : 'Apply'}
-                    </button>
-                  </div>
-                </>
+                <div className="space-y-2">
+                  {modelProviders.map((p, i) => {
+                    const c = COLORS[i % COLORS.length]
+                    return (
+                      <div key={p.name} className="flex items-center gap-3">
+                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${providerHealth(p.name)}`} />
+                        <span className="text-sm font-medium text-gray-700 w-40 shrink-0">{p.name}</span>
+                        <span className="text-xs text-gray-400">{p.total_requests} req</span>
+                        <span className="text-xs text-gray-400">{Math.round(p.avg_latency_ms)}ms</span>
+                        {p.error_rate > 0 && (
+                          <span className={`text-xs ${p.error_rate > 5 ? 'text-red-500' : 'text-gray-400'}`}>
+                            {p.error_rate.toFixed(1)}% err
+                          </span>
+                        )}
+                        <span className={`text-sm font-semibold ml-auto tabular-nums ${c.text}`}>
+                          {Math.round(p.traffic_share)}%
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
               )}
             </div>
           )
         })}
       </div>
+    </div>
+  )
+}
+
+function StatChip({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
+  return (
+    <div className="bg-gray-50 rounded-lg px-3 py-2">
+      <p className="text-xs text-gray-400 mb-0.5">{label}</p>
+      <p className={`text-sm font-semibold ${accent ? 'text-red-600' : 'text-gray-900'}`}>{value}</p>
+      {sub && <p className="text-xs text-gray-400">{sub}</p>}
     </div>
   )
 }

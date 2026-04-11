@@ -20,7 +20,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (provider) (rate(gateway_requests_total_total[1m]))",
+          "expr": "sum by (provider) (rate(gateway_requests_total[1m]))",
           "legendFormat": "{{provider}}",
           "refId": "A"
         }
@@ -41,7 +41,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (model) (rate(gateway_requests_total_total[1m]))",
+          "expr": "sum by (model) (rate(gateway_requests_total[1m]))",
           "legendFormat": "{{model}}",
           "refId": "A"
         }
@@ -104,7 +104,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (provider) (rate(gateway_requests_total_total{error=\"true\"}[5m])) / sum by (provider) (rate(gateway_requests_total_total[5m]))",
+          "expr": "sum by (provider) (rate(gateway_requests_total{error=\"true\"}[5m])) / sum by (provider) (rate(gateway_requests_total[5m]))",
           "legendFormat": "{{provider}}",
           "refId": "A"
         }
@@ -112,47 +112,26 @@
     },
     {
       "id": 6,
-      "title": "CPU Usage",
+      "title": "TTFT by Provider",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 16 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "fieldConfig": {
         "defaults": {
-          "custom": { "lineWidth": 2, "fillOpacity": 15 },
-          "unit": "percent",
-          "color": { "mode": "fixed", "fixedColor": "orange" }
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "unit": "ms"
         },
         "overrides": []
       },
       "targets": [
         {
-          "expr": "gateway_cpu_usage_percent",
-          "legendFormat": "CPU %",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 7,
-      "title": "Active Requests & Goroutines",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 16 },
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "fieldConfig": {
-        "defaults": {
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "expr": "gateway_requests_active",
-          "legendFormat": "Active requests",
+          "expr": "histogram_quantile(0.50, sum by (provider, le) (rate(gateway_ttft_milliseconds_bucket[5m])))",
+          "legendFormat": "p50 {{provider}}",
           "refId": "A"
         },
         {
-          "expr": "gateway_goroutines",
-          "legendFormat": "Goroutines",
+          "expr": "histogram_quantile(0.95, sum by (provider, le) (rate(gateway_ttft_milliseconds_bucket[5m])))",
+          "legendFormat": "p95 {{provider}}",
           "refId": "B"
         }
       ]
@@ -165,7 +144,7 @@
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
-          "expr": "sum by (provider) (gateway_requests_total_total)",
+          "expr": "sum by (provider) (gateway_requests_total)",
           "legendFormat": "{{provider}}",
           "refId": "A"
         }
@@ -173,14 +152,47 @@
     },
     {
       "id": 9,
-      "title": "Response Codes Distribution",
-      "type": "piechart",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "title": "Token Throughput",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "unit": "short"
+        },
+        "overrides": []
+      },
       "targets": [
         {
-          "expr": "sum by (status_code) (gateway_requests_total_total)",
-          "legendFormat": "HTTP {{status_code}}",
+          "expr": "sum by (provider) (rate(gateway_tokens_input_total[1m])) * 60",
+          "legendFormat": "input {{provider}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (provider) (rate(gateway_tokens_output_total[1m])) * 60",
+          "legendFormat": "output {{provider}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Cost Rate by Provider",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 15 },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (provider) (rate(gateway_request_cost_USD_total[5m])) * 3600",
+          "legendFormat": "{{provider}} $/hr",
           "refId": "A"
         }
       ]

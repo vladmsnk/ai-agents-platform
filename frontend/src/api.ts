@@ -50,10 +50,27 @@ export interface ProviderStats {
   avg_ttft_ms: number;
 }
 
+export interface ModelProviderStats {
+  name: string;
+  total_requests: number;
+  error_rate: number;
+  avg_latency_ms: number;
+  traffic_share: number;
+}
+
 export interface ModelStats {
   name: string;
   total_requests: number;
   rpm: number;
+  error_count: number;
+  error_rate: number;
+  avg_latency_ms: number;
+  latency_p95_ms: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost: number;
+  avg_ttft_ms: number;
+  providers: ModelProviderStats[];
 }
 
 export interface ErrorEntry {
@@ -98,6 +115,12 @@ export interface AgentCard {
   };
   skills: { id: string; name: string; description: string; tags?: string[] }[];
   provider_name?: string;
+  status: string;
+}
+
+export interface DiscoverResult {
+  agent: AgentCard;
+  score: number;
 }
 
 export interface AgentInput {
@@ -140,4 +163,10 @@ export const api = {
   addAgent: (a: AgentInput) => request<AgentCard>('/agents', { method: 'POST', body: JSON.stringify(a) }),
   updateAgent: (id: string, a: Partial<AgentInput>) => request<AgentCard>(`/agents/${id}`, { method: 'PUT', body: JSON.stringify(a) }),
   deleteAgent: (id: string) => request<{ deleted: string }>(`/agents/${id}`, { method: 'DELETE' }),
+  discoverAgents: (query: string, topN = 5, minScore = 0.1) =>
+    request<DiscoverResult[]>('/agents/discover', {
+      method: 'POST',
+      body: JSON.stringify({ query, top_n: topN, min_score: minScore }),
+    }),
+  getAgentHealth: (id: string) => request<{ id: string; status: string }>(`/agents/${id}/health`),
 };

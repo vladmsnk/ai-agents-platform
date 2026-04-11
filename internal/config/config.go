@@ -33,7 +33,9 @@ type Config struct {
 	DatabaseURL      string     `yaml:"database_url" json:"-"`
 	Providers        []Provider `yaml:"providers" json:"providers"`
 	BalancerStrategy string     `yaml:"balancer_strategy" json:"balancer_strategy"`
-	MlflowURL        string     `yaml:"mlflow_url" json:"mlflow_url"`
+	JaegerURL        string     `yaml:"jaeger_url" json:"jaeger_url"`
+	EmbeddingModel   string     `yaml:"embedding_model" json:"embedding_model"`
+	GatewayURL       string     `yaml:"gateway_url" json:"gateway_url"`
 }
 
 func Load(path string) (*Config, error) {
@@ -50,10 +52,19 @@ func Load(path string) (*Config, error) {
 	if cfg.Listen == "" {
 		cfg.Listen = ":8080"
 	}
+	if cfg.EmbeddingModel == "" {
+		cfg.EmbeddingModel = "google/gemini-embedding-001"
+	}
+	if cfg.GatewayURL == "" {
+		cfg.GatewayURL = "http://localhost" + cfg.Listen
+	}
 
-	// Allow DATABASE_URL env to override config file
+	// Allow env vars to override config file
 	if env := os.Getenv("DATABASE_URL"); env != "" {
 		cfg.DatabaseURL = env
+	}
+	if env := os.Getenv("GATEWAY_URL"); env != "" {
+		cfg.GatewayURL = env
 	}
 
 	for i := range cfg.Providers {
@@ -81,8 +92,10 @@ func ApplyDefaults(p *Provider) {
 	if p.Priority <= 0 {
 		p.Priority = 10
 	}
-	if p.KeyEnv != "" && p.APIKey == "" {
-		p.APIKey = os.Getenv(p.KeyEnv)
+	if p.KeyEnv != "" {
+		if envKey := os.Getenv(p.KeyEnv); envKey != "" {
+			p.APIKey = envKey
+		}
 	}
 }
 
