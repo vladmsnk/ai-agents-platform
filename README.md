@@ -43,31 +43,54 @@ Proxy OpenAI-compatible requests to multiple LLM providers with load balancing, 
 
 ## Architecture
 
-```
-                         ┌─────────────┐
-                         │   Frontend   │ React + Tailwind
-                         │   :8080      │ Admin UI
-                         └──────┬──────┘
-                                │ nginx proxy
-                                ▼
-┌──────────┐           ┌─────────────────┐           ┌──────────────┐
-│ LLM      │◄──────────│    Gateway       │──────────►│  PostgreSQL  │
-│ Providers│  /v1/chat  │    (Go)         │  pgx/v5   │  :5432       │
-│ OpenRouter│  /v1/embed│                 │           └──────────────┘
-└──────────┘           │  ┌───────────┐  │
-                       │  │ Balancer  │  │           ┌──────────────┐
-┌──────────┐           │  │ Circuit   │  │──────────►│  Prometheus  │
-│ Agent 1  │◄──A2A─────│  │ RateLimit │  │  metrics  │  :9090       │
-│ Agent 2  │◄──A2A─────│  │ Health    │  │           └──────┬───────┘
-│ Agent N  │◄──A2A─────│  └───────────┘  │                  │
-└──────────┘           └─────────────────┘           ┌──────▼───────┐
-                          │          │               │   Grafana    │
-                          │  traces  │               │   :3000      │
-                          ▼          │               └──────────────┘
-                    ┌──────────┐     │
-                    │  Jaeger  │     │
-                    │  :16686  │     │
-                    └──────────┘     │
+```mermaid
+graph TB
+    subgraph UI["Admin UI :8080"]
+        Frontend["Frontend<br/>React + Tailwind"]
+    end
+
+    subgraph Gateway["Gateway (Go)"]
+        Proxy["/v1/chat/completions<br/>/v1/embeddings"]
+        A2AProxy["/a2a — A2A Proxy<br/>auto-route · explicit route"]
+        Registry["Agent Registry<br/>semantic discovery"]
+        Balancer["Balancer · Circuit Breaker<br/>Rate Limiter · Health Checker"]
+    end
+
+    subgraph Providers["LLM Providers"]
+        OpenRouter["OpenRouter"]
+        Other["OpenAI / Anthropic / ..."]
+    end
+
+    subgraph Agents["A2A Agents"]
+        A1["translator"]
+        A2["summarizer"]
+        A3["code-reviewer"]
+        AN["+ 5 more agents"]
+    end
+
+    subgraph Observability
+        Prometheus["Prometheus :9090"]
+        Grafana["Grafana :3000"]
+        Jaeger["Jaeger :16686"]
+    end
+
+    DB[("PostgreSQL :5432")]
+
+    Frontend -->|nginx proxy| Gateway
+    Proxy -->|load balanced| Providers
+    A2AProxy -->|"message/send"| Agents
+    Registry -->|"cosine similarity"| A2AProxy
+    Balancer --> Proxy
+    Gateway --> DB
+    Gateway -->|metrics| Prometheus
+    Prometheus --> Grafana
+    Gateway -->|traces| Jaeger
+    Agents -->|"/v1/chat/completions"| Proxy
+    Agents -->|"/api/agents/discover"| Registry
+
+    style Gateway fill:#1e293b,stroke:#334155,color:#fff
+    style UI fill:#2563eb,stroke:#1d4ed8,color:#fff
+    style Observability fill:#059669,stroke:#047857,color:#fff
 ```
 
 ## Quick Start
