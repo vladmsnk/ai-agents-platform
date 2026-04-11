@@ -18,16 +18,17 @@ import (
 )
 
 type API struct {
-	store    *storage.Store
-	balancer *balancer.Balancer
-	health   *health.Checker
-	stats    *stats.Collector
-	registry *a2a.Registry
-	logger   *slog.Logger
+	store      *storage.Store
+	balancer   *balancer.Balancer
+	health     *health.Checker
+	stats      *stats.Collector
+	registry   *a2a.Registry
+	logger     *slog.Logger
+	gatewayURL string
 }
 
-func New(store *storage.Store, b *balancer.Balancer, h *health.Checker, s *stats.Collector, registry *a2a.Registry, logger *slog.Logger) *API {
-	return &API{store: store, balancer: b, health: h, stats: s, registry: registry, logger: logger}
+func New(store *storage.Store, b *balancer.Balancer, h *health.Checker, s *stats.Collector, registry *a2a.Registry, logger *slog.Logger, gatewayURL string) *API {
+	return &API{store: store, balancer: b, health: h, stats: s, registry: registry, logger: logger, gatewayURL: gatewayURL}
 }
 
 func (a *API) Register(mux *http.ServeMux) {
@@ -37,6 +38,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/health", a.handleHealthAll)
 	mux.HandleFunc("/api/health/", a.handleHealthOne)
 	mux.HandleFunc("/api/agents", a.handleAgents)
+	mux.HandleFunc("/api/agents/discover", a.handleDiscover)
 	mux.HandleFunc("/api/agents/", a.handleAgent)
 }
 
@@ -418,6 +420,22 @@ func (a *API) handleAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handle /api/agents/{id}/health
+	if strings.HasSuffix(id, "/health") {
+		id = strings.TrimSuffix(id, "/health")
+		if r.Method == http.MethodGet {
+			agent, ok := a.registry.Get(id)
+			if !ok {
+				http.Error(w, "agent not found", http.StatusNotFound)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"id": agent.ID, "status": agent.Status})
+			return
+		}
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		agent, ok := a.registry.Get(id)
@@ -453,6 +471,63 @@ func (a *API) handleAgent(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// --- Discover ---
+
+type discoverInput struct {
+	Query            string  `json:"query"`
+	TopN             int     `json:"top_n"`
+	MinScore         float64 `json:"min_score"`
+	IncludeUnhealthy bool    `json:"include_unhealthy"`
+}
+
+func (a *API) handleDiscover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var input discoverInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if input.Query == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "query is required"})
+		return
+	}
+	if input.TopN <= 0 {
+		input.TopN = 5
+	}
+	if input.MinScore <= 0 {
+		input.MinScore = 0.1
+	}
+
+	results, err := a.registry.Discover(r.Context(), input.Query, input.TopN, input.MinScore, input.IncludeUnhealthy)
+	if err != nil {
+		a.logger.Error("discover failed", "error", err)
+		http.Error(w, "discover failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if results == nil {
+		results = []a2a.DiscoverResult{}
+	}
+
+	// Enrich results with proxy URL for A2A calls through the gateway
+	type enrichedResult struct {
+		a2a.DiscoverResult
+		ProxyURL string `json:"proxy_url"`
+	}
+	enriched := make([]enrichedResult, len(results))
+	gwURL := strings.TrimRight(a.gatewayURL, "/")
+	for i, r := range results {
+		enriched[i] = enrichedResult{
+			DiscoverResult: r,
+			ProxyURL:       gwURL + "/a2a/" + r.Agent.ID,
+		}
+	}
+	writeJSON(w, http.StatusOK, enriched)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

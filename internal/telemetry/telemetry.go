@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime"
@@ -12,9 +13,19 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otelprometheus "go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	otelmetric "go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// Tracer returns the global tracer for the gateway.
+func Tracer() trace.Tracer {
+	return otel.Tracer("llm-gateway")
+}
 
 type Metrics struct {
 	RequestsTotal  otelmetric.Int64Counter
@@ -30,25 +41,54 @@ type Metrics struct {
 	OutputTokensTotal otelmetric.Int64Counter
 	RequestCost       otelmetric.Float64Counter
 
-	provider *sdkmetric.MeterProvider
-	stop     chan struct{}
+	meterProvider *sdkmetric.MeterProvider
+	traceProvider *sdktrace.TracerProvider
+	stop          chan struct{}
 }
 
-func Setup() (*Metrics, error) {
+// Setup initializes metrics (Prometheus) and tracing (OTLP → Jaeger).
+// jaegerURL is the OTLP HTTP endpoint (e.g. "http://jaeger:4318"). Empty = tracing disabled.
+func Setup(jaegerURL string) (*Metrics, error) {
 	exporter, err := otelprometheus.New()
 	if err != nil {
 		return nil, fmt.Errorf("prometheus exporter: %w", err)
 	}
 
-	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exporter))
-	otel.SetMeterProvider(provider)
-
-	meter := provider.Meter("llm-gateway")
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exporter))
+	otel.SetMeterProvider(meterProvider)
 
 	m := &Metrics{
-		provider: provider,
-		stop:     make(chan struct{}),
+		meterProvider: meterProvider,
+		stop:          make(chan struct{}),
 	}
+
+	// Tracing
+	if jaegerURL != "" {
+		traceExporter, err := otlptracehttp.New(
+			context.Background(),
+			otlptracehttp.WithEndpoint(jaegerURL),
+			otlptracehttp.WithInsecure(),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("trace exporter: %w", err)
+		}
+
+		res := resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceName("llm-gateway"),
+			semconv.ServiceVersion("2.0.0"),
+		)
+
+		tp := sdktrace.NewTracerProvider(
+			sdktrace.WithBatcher(traceExporter),
+			sdktrace.WithSampler(sdktrace.AlwaysSample()),
+			sdktrace.WithResource(res),
+		)
+		otel.SetTracerProvider(tp)
+		m.traceProvider = tp
+	}
+
+	meter := meterProvider.Meter("llm-gateway")
 
 	m.RequestsTotal, err = meter.Int64Counter("gateway.requests.total",
 		otelmetric.WithDescription("Total number of proxied requests"),
@@ -192,7 +232,12 @@ func (m *Metrics) TrackInflight(ctx context.Context, delta int64) {
 
 func (m *Metrics) Shutdown(ctx context.Context) error {
 	close(m.stop)
-	return m.provider.Shutdown(ctx)
+	var errs []error
+	if m.traceProvider != nil {
+		errs = append(errs, m.traceProvider.Shutdown(ctx))
+	}
+	errs = append(errs, m.meterProvider.Shutdown(ctx))
+	return errors.Join(errs...)
 }
 
 func Handler() http.Handler {

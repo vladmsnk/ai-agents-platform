@@ -13,9 +13,11 @@ import (
 
 	"github.com/vymoiseenkov/ai-agents-platform/internal/balancer"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/config"
-	"github.com/vymoiseenkov/ai-agents-platform/internal/mlflow"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/stats"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/telemetry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Proxy struct {
@@ -23,12 +25,12 @@ type Proxy struct {
 	logger       *slog.Logger
 	collector    *stats.Collector
 	metrics      *telemetry.Metrics
-	mlflow       *mlflow.Client
+	tracer       trace.Tracer
 	client       *http.Client
 	streamClient *http.Client
 }
 
-func New(b *balancer.Balancer, logger *slog.Logger, collector *stats.Collector, metrics *telemetry.Metrics, ml *mlflow.Client) *Proxy {
+func New(b *balancer.Balancer, logger *slog.Logger, collector *stats.Collector, metrics *telemetry.Metrics) *Proxy {
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 10,
@@ -39,7 +41,7 @@ func New(b *balancer.Balancer, logger *slog.Logger, collector *stats.Collector, 
 		logger:       logger,
 		collector:    collector,
 		metrics:      metrics,
-		mlflow:       ml,
+		tracer:       telemetry.Tracer(),
 		client:       &http.Client{Transport: transport},
 		streamClient: &http.Client{Transport: transport, Timeout: 0},
 	}
@@ -74,11 +76,23 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, span := p.tracer.Start(r.Context(), "llm.chat_completion",
+		trace.WithAttributes(
+			attribute.String("llm.model", req.Model),
+			attribute.Bool("llm.stream", req.Stream),
+		),
+	)
+	defer span.End()
+	r = r.WithContext(ctx)
+
 	primary, fallbacks, ok := p.balancer.Next(req.Model)
 	if !ok {
+		span.SetStatus(codes.Error, "model not found")
 		http.Error(w, fmt.Sprintf("model %q not found", req.Model), http.StatusNotFound)
 		return
 	}
+
+	span.SetAttributes(attribute.String("llm.provider.primary", primary.Name))
 
 	if p.metrics != nil {
 		p.metrics.TrackInflight(r.Context(), 1)
@@ -95,15 +109,27 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"failed", primary.Name,
 			"fallback", fb.Name,
 		)
+		span.AddEvent("fallback", trace.WithAttributes(attribute.String("provider", fb.Name)))
 		if p.tryProxy(w, r, fb, body, req.Stream, req.Model) {
 			return
 		}
 	}
 
+	span.SetStatus(codes.Error, "all providers failed")
 	http.Error(w, "all providers failed", http.StatusBadGateway)
 }
 
 func (p *Proxy) tryProxy(w http.ResponseWriter, origReq *http.Request, provider config.Provider, body []byte, stream bool, model string) bool {
+	ctx, provSpan := p.tracer.Start(origReq.Context(), "llm.provider_call",
+		trace.WithAttributes(
+			attribute.String("llm.provider", provider.Name),
+			attribute.String("llm.model", model),
+			attribute.Bool("llm.stream", stream),
+		),
+	)
+	defer provSpan.End()
+	origReq = origReq.WithContext(ctx)
+
 	url := strings.TrimRight(provider.URL, "/") + "/v1/chat/completions"
 	start := time.Now()
 
@@ -112,6 +138,7 @@ func (p *Proxy) tryProxy(w http.ResponseWriter, origReq *http.Request, provider 
 		p.logger.Error("failed to create request", "provider", provider.Name, "error", err)
 		p.record(origReq.Context(), provider.Name, model, 0, time.Since(start), true, err.Error())
 		p.balancer.RecordFailure(provider.Name)
+		provSpan.SetStatus(codes.Error, err.Error())
 		return false
 	}
 
@@ -125,9 +152,9 @@ func (p *Proxy) tryProxy(w http.ResponseWriter, origReq *http.Request, provider 
 		client = p.streamClient
 	}
 	if !stream && provider.Timeout > 0 {
-		ctx, cancel := context.WithTimeout(origReq.Context(), time.Duration(provider.Timeout)*time.Second)
+		tctx, cancel := context.WithTimeout(origReq.Context(), time.Duration(provider.Timeout)*time.Second)
 		defer cancel()
-		req = req.WithContext(ctx)
+		req = req.WithContext(tctx)
 	}
 
 	resp, err := client.Do(req)
@@ -137,14 +164,17 @@ func (p *Proxy) tryProxy(w http.ResponseWriter, origReq *http.Request, provider 
 		p.logger.Error("request failed", "provider", provider.Name, "error", err)
 		p.record(origReq.Context(), provider.Name, model, 0, latency, true, err.Error())
 		p.balancer.RecordFailure(provider.Name)
+		provSpan.SetStatus(codes.Error, err.Error())
 		return false
 	}
 
 	if resp.StatusCode >= 500 {
 		resp.Body.Close()
+		errMsg := fmt.Sprintf("HTTP %d", resp.StatusCode)
 		p.logger.Warn("provider returned 5xx", "provider", provider.Name, "status", resp.StatusCode)
-		p.record(origReq.Context(), provider.Name, model, resp.StatusCode, latency, true, fmt.Sprintf("HTTP %d", resp.StatusCode))
+		p.record(origReq.Context(), provider.Name, model, resp.StatusCode, latency, true, errMsg)
 		p.balancer.RecordFailure(provider.Name)
+		provSpan.SetStatus(codes.Error, errMsg)
 		return false
 	}
 
@@ -204,19 +234,16 @@ func (p *Proxy) tryProxy(w http.ResponseWriter, origReq *http.Request, provider 
 		}
 	}
 
-	if p.mlflow != nil {
-		go p.mlflow.LogRun(mlflow.RunParams{
-			Provider:     provider.Name,
-			Model:        model,
-			Stream:       stream,
-			LatencyMs:    float64(totalLatency.Milliseconds()),
-			TTFTMs:       float64(ttft.Milliseconds()),
-			TPOTMs:       float64(tpot.Milliseconds()),
-			InputTokens:  usage.PromptTokens,
-			OutputTokens: usage.CompletionTokens,
-			Cost:         cost,
-			StatusCode:   resp.StatusCode,
-		})
+	provSpan.SetAttributes(
+		attribute.Int("llm.status_code", resp.StatusCode),
+		attribute.Int64("llm.latency_ms", totalLatency.Milliseconds()),
+		attribute.Int64("llm.ttft_ms", ttft.Milliseconds()),
+		attribute.Int("llm.input_tokens", usage.PromptTokens),
+		attribute.Int("llm.output_tokens", usage.CompletionTokens),
+		attribute.Float64("llm.cost_usd", cost),
+	)
+	if tpot > 0 {
+		provSpan.SetAttributes(attribute.Int64("llm.tpot_ms", tpot.Milliseconds()))
 	}
 
 	return true

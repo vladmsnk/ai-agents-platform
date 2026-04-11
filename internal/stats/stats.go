@@ -89,10 +89,27 @@ type ProviderStats struct {
 	AvgTTFTMs     float64 `json:"avg_ttft_ms"`
 }
 
+type ModelProviderStats struct {
+	Name         string  `json:"name"`
+	TotalReqs    int     `json:"total_requests"`
+	ErrorRate    float64 `json:"error_rate"`
+	AvgLatencyMs float64 `json:"avg_latency_ms"`
+	TrafficShare float64 `json:"traffic_share"`
+}
+
 type ModelStats struct {
-	Name      string  `json:"name"`
-	TotalReqs int     `json:"total_requests"`
-	RPM       float64 `json:"rpm"`
+	Name              string               `json:"name"`
+	TotalReqs         int                  `json:"total_requests"`
+	RPM               float64              `json:"rpm"`
+	ErrorCount        int                  `json:"error_count"`
+	ErrorRate         float64              `json:"error_rate"`
+	AvgLatencyMs      float64              `json:"avg_latency_ms"`
+	LatencyP95Ms      float64              `json:"latency_p95_ms"`
+	TotalInputTokens  int                  `json:"total_input_tokens"`
+	TotalOutputTokens int                  `json:"total_output_tokens"`
+	TotalCost         float64              `json:"total_cost"`
+	AvgTTFTMs         float64              `json:"avg_ttft_ms"`
+	Providers         []ModelProviderStats  `json:"providers"`
 }
 
 type ErrorEntry struct {
@@ -139,14 +156,14 @@ func (c *Collector) Snapshot() Snapshot {
 
 	// By provider
 	provMap := map[string][]RequestRecord{}
-	modelMap := map[string]int{}
+	modelMap := map[string][]RequestRecord{}
 	activeProviders := map[string]bool{}
 	var totalLatency time.Duration
 	var errorCount int
 
 	for _, r := range records {
 		provMap[r.Provider] = append(provMap[r.Provider], r)
-		modelMap[r.Model]++
+		modelMap[r.Model] = append(modelMap[r.Model], r)
 		activeProviders[r.Provider] = true
 		totalLatency += r.Latency
 		snap.TotalInputTokens += r.InputTokens
@@ -159,9 +176,7 @@ func (c *Collector) Snapshot() Snapshot {
 
 	snap.ActiveProviders = len(activeProviders)
 	snap.AvgLatencyMs = float64(totalLatency.Milliseconds()) / float64(len(records))
-	if len(records) > 0 {
-		snap.ErrorRate = float64(errorCount) / float64(len(records)) * 100
-	}
+	snap.ErrorRate = float64(errorCount) / float64(len(records)) * 100
 
 	window := time.Since(records[0].Timestamp)
 	if window < time.Minute {
@@ -203,12 +218,65 @@ func (c *Collector) Snapshot() Snapshot {
 		return snap.ByProvider[i].Name < snap.ByProvider[j].Name
 	})
 
-	for name, count := range modelMap {
-		snap.ByModel = append(snap.ByModel, ModelStats{
-			Name:      name,
-			TotalReqs: count,
-			RPM:       float64(count) / window.Minutes(),
+	for name, recs := range modelMap {
+		ms := ModelStats{Name: name, TotalReqs: len(recs)}
+		var latencies []float64
+		var latSum float64
+		var ttftSum float64
+		var ttftCount int
+		modelProvMap := map[string][]RequestRecord{}
+		for _, r := range recs {
+			if r.Error {
+				ms.ErrorCount++
+			}
+			latMs := float64(r.Latency.Milliseconds())
+			latencies = append(latencies, latMs)
+			latSum += latMs
+			ms.TotalInputTokens += r.InputTokens
+			ms.TotalOutputTokens += r.OutputTokens
+			ms.TotalCost += r.Cost
+			if r.TTFT > 0 {
+				ttftSum += float64(r.TTFT.Milliseconds())
+				ttftCount++
+			}
+			modelProvMap[r.Provider] = append(modelProvMap[r.Provider], r)
+		}
+		if ms.TotalReqs > 0 {
+			ms.ErrorRate = float64(ms.ErrorCount) / float64(ms.TotalReqs) * 100
+			ms.RPM = float64(ms.TotalReqs) / window.Minutes()
+			ms.AvgLatencyMs = latSum / float64(len(latencies))
+		}
+		if ttftCount > 0 {
+			ms.AvgTTFTMs = ttftSum / float64(ttftCount)
+		}
+		sort.Float64s(latencies)
+		ms.LatencyP95Ms = percentile(latencies, 0.95)
+
+		for provName, provRecs := range modelProvMap {
+			mps := ModelProviderStats{
+				Name:      provName,
+				TotalReqs: len(provRecs),
+			}
+			var provErrCount int
+			var provLatSum float64
+			for _, r := range provRecs {
+				if r.Error {
+					provErrCount++
+				}
+				provLatSum += float64(r.Latency.Milliseconds())
+			}
+			if mps.TotalReqs > 0 {
+				mps.ErrorRate = float64(provErrCount) / float64(mps.TotalReqs) * 100
+				mps.AvgLatencyMs = provLatSum / float64(mps.TotalReqs)
+				mps.TrafficShare = float64(mps.TotalReqs) / float64(ms.TotalReqs) * 100
+			}
+			ms.Providers = append(ms.Providers, mps)
+		}
+		sort.Slice(ms.Providers, func(i, j int) bool {
+			return ms.Providers[i].TotalReqs > ms.Providers[j].TotalReqs
 		})
+
+		snap.ByModel = append(snap.ByModel, ms)
 	}
 	sort.Slice(snap.ByModel, func(i, j int) bool {
 		return snap.ByModel[i].Name < snap.ByModel[j].Name

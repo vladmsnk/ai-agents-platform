@@ -23,6 +23,7 @@ services:
       - .env
     environment:
       DATABASE_URL: postgres://gateway:gateway@postgres:5432/gateway?sslmode=disable
+      GATEWAY_URL: http://gateway:8080
     expose:
       - "8080"
     depends_on:
@@ -53,18 +54,15 @@ services:
       gateway:
         condition: service_healthy
 
-  mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.22.0
-    command: >
-      mlflow server
-      --host 0.0.0.0
-      --port 5000
-      --backend-store-uri sqlite:///mlflow/mlflow.db
-      --default-artifact-root /mlflow/artifacts
+  jaeger:
+    image: jaegertracing/jaeger:2.6.0
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
     ports:
-      - "5001:5000"
+      - "16686:16686"   # Jaeger UI
+      - "4318:4318"     # OTLP HTTP receiver
     volumes:
-      - mlflow-data:/mlflow
+      - jaeger-data:/badger
 
   grafana:
     image: grafana/grafana:11.6.0
@@ -83,8 +81,158 @@ services:
     depends_on:
       - prometheus
 
+  agent-translator:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock-agent
+    environment:
+      AGENT_NAME: translator
+      AGENT_DESCRIPTION: "Translates text between languages with high accuracy. Supports multiple language pairs including English, Japanese, Spanish, French, German, Chinese."
+      AGENT_URL: http://agent-translator:9001
+      AGENT_SKILLS: "translate,localize"
+      REGISTRY_URL: http://gateway:8080
+      GATEWAY_URL: http://gateway:8080
+      LISTEN: ":9001"
+    expose:
+      - "9001"
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  agent-summarizer:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock-agent
+    environment:
+      AGENT_NAME: summarizer
+      AGENT_DESCRIPTION: "Summarizes documents and extracts key points. Produces concise summaries of long texts, reports, and articles."
+      AGENT_URL: http://agent-summarizer:9001
+      AGENT_SKILLS: "summarize,extract key points"
+      REGISTRY_URL: http://gateway:8080
+      GATEWAY_URL: http://gateway:8080
+      LISTEN: ":9001"
+    expose:
+      - "9001"
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  agent-code-reviewer:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock-agent
+    environment:
+      AGENT_NAME: code-reviewer
+      AGENT_DESCRIPTION: "Reviews code and suggests improvements. Analyzes code quality, finds bugs, suggests refactoring, and checks for security vulnerabilities."
+      AGENT_URL: http://agent-code-reviewer:9001
+      AGENT_SKILLS: "review code,suggest fixes,find bugs"
+      REGISTRY_URL: http://gateway:8080
+      GATEWAY_URL: http://gateway:8080
+      LISTEN: ":9001"
+      DELEGATE_KEYWORD: "translate"
+      DELEGATE_QUERY: "translate text to another language"
+    expose:
+      - "9001"
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  agent-sentiment:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock-agent
+    environment:
+      AGENT_NAME: sentiment-analyzer
+      AGENT_DESCRIPTION: "Analyzes the emotional tone and sentiment of text. Detects positive, negative, and neutral sentiment. Performs opinion mining and emotion classification."
+      AGENT_URL: http://agent-sentiment:9001
+      AGENT_SKILLS: "sentiment analysis,emotion detection,opinion mining"
+      REGISTRY_URL: http://gateway:8080
+      GATEWAY_URL: http://gateway:8080
+      LISTEN: ":9001"
+    expose:
+      - "9001"
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  agent-data-extractor:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock-agent
+    environment:
+      AGENT_NAME: data-extractor
+      AGENT_DESCRIPTION: "Extracts structured data from unstructured text. Parses emails, dates, phone numbers, addresses, names, and entities from documents."
+      AGENT_URL: http://agent-data-extractor:9001
+      AGENT_SKILLS: "entity extraction,data parsing,NER,structured output"
+      REGISTRY_URL: http://gateway:8080
+      GATEWAY_URL: http://gateway:8080
+      LISTEN: ":9001"
+    expose:
+      - "9001"
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  agent-content-writer:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock-agent
+    environment:
+      AGENT_NAME: content-writer
+      AGENT_DESCRIPTION: "Creates high-quality written content. Writes blog posts, marketing copy, product descriptions, emails, and creative fiction."
+      AGENT_URL: http://agent-content-writer:9001
+      AGENT_SKILLS: "copywriting,blog writing,creative writing,email drafting"
+      REGISTRY_URL: http://gateway:8080
+      GATEWAY_URL: http://gateway:8080
+      LISTEN: ":9001"
+      DELEGATE_KEYWORD: "translate"
+      DELEGATE_QUERY: "translate text to another language"
+    expose:
+      - "9001"
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  agent-math-solver:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock-agent
+    environment:
+      AGENT_NAME: math-solver
+      AGENT_DESCRIPTION: "Solves mathematical problems. Handles arithmetic, algebra, calculus, statistics, and equation solving. Shows step-by-step solutions."
+      AGENT_URL: http://agent-math-solver:9001
+      AGENT_SKILLS: "math,algebra,calculus,statistics,equation solving"
+      REGISTRY_URL: http://gateway:8080
+      GATEWAY_URL: http://gateway:8080
+      LISTEN: ":9001"
+    expose:
+      - "9001"
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  agent-security-scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock-agent
+    environment:
+      AGENT_NAME: security-scanner
+      AGENT_DESCRIPTION: "Scans code and configurations for security vulnerabilities. Detects SQL injection, XSS, CSRF, authentication flaws, and OWASP Top 10 issues."
+      AGENT_URL: http://agent-security-scanner:9001
+      AGENT_SKILLS: "vulnerability scanning,OWASP,security audit,penetration testing"
+      REGISTRY_URL: http://gateway:8080
+      GATEWAY_URL: http://gateway:8080
+      LISTEN: ":9001"
+      DELEGATE_KEYWORD: "summarize"
+      DELEGATE_QUERY: "summarize document into key points"
+    expose:
+      - "9001"
+    depends_on:
+      gateway:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   prometheus-data:
   grafana-data:
-  mlflow-data:
+  jaeger-data:

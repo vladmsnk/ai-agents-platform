@@ -4,8 +4,14 @@ database_url: "postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable
 # Balancer strategy: "weighted" (default), "latency", or "priority"
 balancer_strategy: "weighted"
 
-# MLflow tracking URL (empty = disabled)
-mlflow_url: "http://localhost:5000"
+# Jaeger OTLP endpoint for distributed tracing (empty = disabled)
+jaeger_url: "jaeger:4318"
+
+# Embedding model used for semantic agent discovery
+embedding_model: "google/gemini-embedding-001"
+
+# Gateway URL for self-calls (embeddings). In Docker: "http://gateway:8080"
+gateway_url: "http://localhost:8080"
 
 # Providers listed here are seeded into the database on first startup.
 # Once in the DB, manage them via the API — changes here won't overwrite DB state.
@@ -44,3 +50,12 @@ providers:
     timeout_seconds: 120
     price_per_input_token: 0.000003
     price_per_output_token: 0.000015
+
+  - name: openrouter
+    url: https://openrouter.ai/api
+    key_env: OPENROUTER_API_KEY
+    models:
+      - google/gemini-embedding-001
+    weight: 1
+    priority: 1
+    timeout_seconds: 30

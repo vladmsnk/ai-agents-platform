@@ -1,11 +1,24 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api'
-import type { AgentCard, AgentInput } from '../api'
+import type { AgentCard, AgentInput, DiscoverResult } from '../api'
 
 const emptyForm: AgentInput = {
   id: '', name: '', description: '', url: '', version: '1.0.0',
   capabilities: { streaming: false, pushNotifications: false, stateTransitionHistory: false },
   skills: [],
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const colors: Record<string, string> = {
+    active: 'bg-green-50 text-green-700 border-green-200',
+    unhealthy: 'bg-red-50 text-red-700 border-red-200',
+    inactive: 'bg-gray-50 text-gray-500 border-gray-200',
+  }
+  return (
+    <span className={`px-2 py-0.5 text-xs font-medium rounded-full border ${colors[status] || colors.inactive}`}>
+      {status || 'unknown'}
+    </span>
+  )
 }
 
 export default function Agents() {
@@ -15,6 +28,11 @@ export default function Agents() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<AgentInput>(emptyForm)
   const [saving, setSaving] = useState(false)
+
+  // Discover state
+  const [discoverQuery, setDiscoverQuery] = useState('')
+  const [discoverResults, setDiscoverResults] = useState<DiscoverResult[] | null>(null)
+  const [discovering, setDiscovering] = useState(false)
 
   const fetchAgents = useCallback(async () => {
     try {
@@ -68,6 +86,25 @@ export default function Agents() {
     fetchAgents()
   }
 
+  const handleDiscover = async () => {
+    if (!discoverQuery.trim()) return
+    setDiscovering(true)
+    try {
+      const results = await api.discoverAgents(discoverQuery.trim())
+      setDiscoverResults(results || [])
+    } catch (e) {
+      console.error('Discover failed:', e)
+      setDiscoverResults([])
+    } finally {
+      setDiscovering(false)
+    }
+  }
+
+  const clearDiscover = () => {
+    setDiscoverQuery('')
+    setDiscoverResults(null)
+  }
+
   if (loading) {
     return <div className="p-8 text-gray-400">Loading...</div>
   }
@@ -94,12 +131,71 @@ export default function Agents() {
         </button>
       </div>
 
+      {/* Discover search bar */}
+      <div className="mb-6 bg-white rounded-xl border border-gray-200 p-4">
+        <label className="block text-sm font-medium text-gray-700 mb-2">Semantic Agent Discovery</label>
+        <div className="flex gap-2">
+          <input
+            value={discoverQuery}
+            onChange={e => setDiscoverQuery(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleDiscover()}
+            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+            placeholder="Describe what you need, e.g. 'translate code review to Japanese'"
+          />
+          <button
+            onClick={handleDiscover}
+            disabled={discovering || !discoverQuery.trim()}
+            className="px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors"
+          >
+            {discovering ? 'Searching...' : 'Discover'}
+          </button>
+          {discoverResults !== null && (
+            <button onClick={clearDiscover} className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">
+              Clear
+            </button>
+          )}
+        </div>
+
+        {/* Discover results */}
+        {discoverResults !== null && (
+          <div className="mt-4">
+            {discoverResults.length === 0 ? (
+              <p className="text-sm text-gray-400">No matching agents found</p>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-500 font-medium">{discoverResults.length} result{discoverResults.length !== 1 ? 's' : ''} found</p>
+                {discoverResults.map(r => (
+                  <div key={r.agent.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100">
+                    <div className="flex items-center gap-3">
+                      <StatusBadge status={r.agent.status} />
+                      <div>
+                        <span className="text-sm font-medium text-gray-900">{r.agent.name}</span>
+                        <p className="text-xs text-gray-500">{r.agent.description}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-sm font-mono font-medium text-primary-600">
+                        {(r.score * 100).toFixed(1)}%
+                      </span>
+                      <p className="text-xs text-gray-400">relevance</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {agents.map(a => (
           <div key={a.id} className="bg-white rounded-xl border border-gray-200 p-5">
             <div className="flex items-start justify-between mb-3">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">{a.name}</h3>
+                <div className="flex items-center gap-2 mb-1">
+                  <h3 className="text-lg font-semibold text-gray-900">{a.name}</h3>
+                  <StatusBadge status={a.status} />
+                </div>
                 <p className="text-xs text-gray-400 font-mono">{a.id}</p>
               </div>
               <div className="flex gap-2">

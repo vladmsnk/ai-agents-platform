@@ -2,6 +2,22 @@ package a2a
 
 import "encoding/json"
 
+// Agent status constants.
+const (
+	StatusActive    = "active"
+	StatusUnhealthy = "unhealthy"
+)
+
+// A2A v1.0 task state constants.
+const (
+	TaskStateSubmitted     = "submitted"
+	TaskStateWorking       = "working"
+	TaskStateCompleted     = "completed"
+	TaskStateFailed        = "failed"
+	TaskStateCanceled      = "canceled"
+	TaskStateInputRequired = "input_required"
+)
+
 // AgentCard represents a Google A2A Agent Card.
 // See: https://google.github.io/A2A/specification/
 type AgentCard struct {
@@ -16,6 +32,8 @@ type AgentCard struct {
 	DefaultOutputModes []string        `json:"defaultOutputModes"`
 	Authentication     *Authentication `json:"authentication,omitempty"`
 	ProviderName       string          `json:"provider_name,omitempty"`
+	Status             string          `json:"status"`
+	Embedding          []float64       `json:"-"` // never exposed via API
 }
 
 type Capabilities struct {
@@ -89,13 +107,21 @@ type Artifact struct {
 	Parts []Part `json:"parts"`
 }
 
-// TaskSendParams is the params for tasks/send and tasks/sendSubscribe.
-type TaskSendParams struct {
+// MessageSendParams is the params for message/send (v1.0) and tasks/send (v0.3).
+type MessageSendParams struct {
 	ID      string  `json:"id"`
 	Message Message `json:"message"`
 }
 
+// TaskSendParams is an alias for backward compatibility with v0.3.
+type TaskSendParams = MessageSendParams
+
 // TaskQueryParams is the params for tasks/get.
 type TaskQueryParams struct {
 	ID string `json:"id"`
+}
+
+// TaskListParams is the params for tasks/list (v1.0).
+type TaskListParams struct {
+	State string `json:"state,omitempty"`
 }

@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api'
 import type { Stats } from '../api'
+import MetricCard from '../components/MetricCard'
 
 const GRAFANA_URL = 'http://localhost:3000'
 const DASHBOARD_UID = 'llm-gateway'
+const JAEGER_URL = 'http://localhost:16686'
 
 const panels = [
   { id: 1, title: 'Request Rate by Provider' },
@@ -11,10 +13,7 @@ const panels = [
   { id: 3, title: 'Latency P50 by Provider' },
   { id: 4, title: 'Latency P95 by Provider' },
   { id: 5, title: 'Error Rate by Provider' },
-  { id: 6, title: 'CPU Usage' },
-  { id: 7, title: 'Active Requests & Goroutines' },
   { id: 8, title: 'Traffic Distribution' },
-  { id: 9, title: 'Response Codes' },
 ]
 
 function grafanaPanelURL(panelId: number) {
@@ -47,14 +46,24 @@ export default function Monitoring() {
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold text-gray-900">Monitoring</h1>
-        <a
-          href={`${GRAFANA_URL}/d/${DASHBOARD_UID}/llm-gateway`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-        >
-          Open in Grafana
-        </a>
+        <div className="flex gap-3">
+          <a
+            href={JAEGER_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+          >
+            Jaeger Tracing
+          </a>
+          <a
+            href={`${GRAFANA_URL}/d/${DASHBOARD_UID}/llm-gateway`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+          >
+            Open in Grafana
+          </a>
+        </div>
       </div>
 
       {/* Metric cards from /api/stats */}
@@ -89,6 +98,80 @@ export default function Monitoring() {
           </div>
         ))}
       </div>
+
+      {/* Cost & Performance comparison */}
+      {stats?.by_provider && stats.by_provider.length > 0 && (() => {
+        const providers = stats.by_provider
+        const maxCost = Math.max(...providers.map(x => x.total_cost), 0.0001)
+        const maxTokens = Math.max(...providers.map(x => x.input_tokens + x.output_tokens), 1)
+        const maxTTFT = Math.max(...providers.map(x => x.avg_ttft_ms), 1)
+
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h3 className="text-sm font-semibold text-gray-700 mb-4">Cost by Provider</h3>
+              <div className="space-y-3">
+                {[...providers].sort((a, b) => b.total_cost - a.total_cost).map(p => (
+                  <div key={p.name}>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="font-medium text-gray-700">{p.name}</span>
+                      <span className="text-gray-500">${p.total_cost.toFixed(4)}</span>
+                    </div>
+                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-amber-400 rounded-full" style={{ width: `${(p.total_cost / maxCost) * 100}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h3 className="text-sm font-semibold text-gray-700 mb-4">Token Usage by Provider</h3>
+              <div className="space-y-3">
+                {[...providers].sort((a, b) => (b.input_tokens + b.output_tokens) - (a.input_tokens + a.output_tokens)).map(p => {
+                  const total = p.input_tokens + p.output_tokens
+                  return (
+                    <div key={p.name}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="font-medium text-gray-700">{p.name}</span>
+                        <span className="text-gray-500">{total.toLocaleString()} tokens</span>
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden flex">
+                        <div className="h-full bg-blue-400" style={{ width: `${(p.input_tokens / maxTokens) * 100}%` }} />
+                        <div className="h-full bg-emerald-400" style={{ width: `${(p.output_tokens / maxTokens) * 100}%` }} />
+                      </div>
+                      <div className="flex gap-3 mt-1 text-[10px] text-gray-400">
+                        <span>In: {p.input_tokens.toLocaleString()}</span>
+                        <span>Out: {p.output_tokens.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h3 className="text-sm font-semibold text-gray-700 mb-4">Avg TTFT by Provider</h3>
+              <div className="space-y-3">
+                {[...providers].filter(p => p.avg_ttft_ms > 0).sort((a, b) => a.avg_ttft_ms - b.avg_ttft_ms).map(p => (
+                  <div key={p.name}>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="font-medium text-gray-700">{p.name}</span>
+                      <span className="text-gray-500">{Math.round(p.avg_ttft_ms)}ms</span>
+                    </div>
+                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-purple-400 rounded-full" style={{ width: `${(p.avg_ttft_ms / maxTTFT) * 100}%` }} />
+                    </div>
+                  </div>
+                ))}
+                {providers.every(p => p.avg_ttft_ms === 0) && (
+                  <p className="text-center text-gray-400 text-xs py-4">No TTFT data yet</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Provider stats table — from /api/stats */}
       <div className="bg-white rounded-xl border border-gray-200 p-5 mb-5">
@@ -158,15 +241,6 @@ export default function Monitoring() {
           <div className="text-center py-8 text-gray-400 text-sm">No errors in the last 5 minutes</div>
         )}
       </div>
-    </div>
-  )
-}
-
-function MetricCard({ label, value, accent }: { label: string; value: string | number; accent?: boolean }) {
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5">
-      <p className="text-xs font-medium text-gray-500 mb-1">{label}</p>
-      <p className={`text-2xl font-semibold ${accent ? 'text-red-600' : 'text-gray-900'}`}>{value}</p>
     </div>
   )
 }
