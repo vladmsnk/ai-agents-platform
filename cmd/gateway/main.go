@@ -126,7 +126,7 @@ func main() {
 	logger.Info("loaded agents from database", "count", len(registry.List()))
 
 	// Agent health checker
-	agentHealth := a2a.NewAgentHealthChecker(registry, logger)
+	agentHealth := a2a.NewAgentHealthChecker(registry, logger, metrics)
 	agentHealth.Start()
 	defer agentHealth.Stop()
 
@@ -148,10 +148,10 @@ func main() {
 		DefaultInputModes:  []string{"text"},
 		DefaultOutputModes: []string{"text"},
 	}
-	a2aHandler := a2a.NewHandler(registry, logger, selfCard)
+	a2aHandler := a2a.NewHandler(registry, logger, selfCard, metrics, collector)
 
 	p := proxy.New(b, logger, collector, metrics)
-	mgmt := api.New(store, b, checker, collector, registry, logger, cfg.GatewayURL)
+	mgmt := api.New(store, b, checker, collector, registry, logger, cfg.GatewayURL, metrics)
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/chat/completions", p)

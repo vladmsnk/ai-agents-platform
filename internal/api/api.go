@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/vymoiseenkov/ai-agents-platform/internal/a2a"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/balancer"
@@ -15,6 +16,7 @@ import (
 	"github.com/vymoiseenkov/ai-agents-platform/internal/health"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/stats"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/storage"
+	"github.com/vymoiseenkov/ai-agents-platform/internal/telemetry"
 )
 
 type API struct {
@@ -24,11 +26,12 @@ type API struct {
 	stats      *stats.Collector
 	registry   *a2a.Registry
 	logger     *slog.Logger
+	metrics    *telemetry.Metrics
 	gatewayURL string
 }
 
-func New(store *storage.Store, b *balancer.Balancer, h *health.Checker, s *stats.Collector, registry *a2a.Registry, logger *slog.Logger, gatewayURL string) *API {
-	return &API{store: store, balancer: b, health: h, stats: s, registry: registry, logger: logger, gatewayURL: gatewayURL}
+func New(store *storage.Store, b *balancer.Balancer, h *health.Checker, s *stats.Collector, registry *a2a.Registry, logger *slog.Logger, gatewayURL string, metrics *telemetry.Metrics) *API {
+	return &API{store: store, balancer: b, health: h, stats: s, registry: registry, logger: logger, gatewayURL: gatewayURL, metrics: metrics}
 }
 
 func (a *API) Register(mux *http.ServeMux) {
@@ -504,7 +507,9 @@ func (a *API) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		input.MinScore = 0.1
 	}
 
+	start := time.Now()
 	results, err := a.registry.Discover(r.Context(), input.Query, input.TopN, input.MinScore, input.IncludeUnhealthy)
+	discoverLatency := time.Since(start)
 	if err != nil {
 		a.logger.Error("discover failed", "error", err)
 		http.Error(w, "discover failed: "+err.Error(), http.StatusInternalServerError)
@@ -512,6 +517,15 @@ func (a *API) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	}
 	if results == nil {
 		results = []a2a.DiscoverResult{}
+	}
+
+	// Record discover metrics
+	if a.metrics != nil {
+		topResult := ""
+		if len(results) > 0 {
+			topResult = results[0].Agent.Name
+		}
+		a.metrics.RecordDiscover(r.Context(), topResult, discoverLatency)
 	}
 
 	// Enrich results with proxy URL for A2A calls through the gateway

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/vymoiseenkov/ai-agents-platform/internal/stats"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -23,10 +24,12 @@ const taskTTL = 30 * time.Minute
 
 // Handler implements the A2A JSON-RPC endpoint and agent card endpoints.
 type Handler struct {
-	registry *Registry
-	logger   *slog.Logger
-	selfCard AgentCard
-	client   *http.Client
+	registry  *Registry
+	logger    *slog.Logger
+	selfCard  AgentCard
+	client    *http.Client
+	metrics   *telemetry.Metrics
+	collector *stats.Collector
 
 	mu    sync.RWMutex
 	tasks map[string]*taskEntry
@@ -38,13 +41,15 @@ type taskEntry struct {
 	createdAt time.Time
 }
 
-func NewHandler(registry *Registry, logger *slog.Logger, selfCard AgentCard) *Handler {
+func NewHandler(registry *Registry, logger *slog.Logger, selfCard AgentCard, metrics *telemetry.Metrics, collector *stats.Collector) *Handler {
 	h := &Handler{
-		registry: registry,
-		logger:   logger,
-		selfCard: selfCard,
-		client:   &http.Client{Timeout: 60 * time.Second},
-		tasks:    make(map[string]*taskEntry),
+		registry:  registry,
+		logger:    logger,
+		selfCard:  selfCard,
+		client:    &http.Client{Timeout: 60 * time.Second},
+		metrics:   metrics,
+		collector: collector,
+		tasks:     make(map[string]*taskEntry),
 	}
 	go h.cleanupLoop()
 	return h
@@ -212,16 +217,31 @@ func (h *Handler) handleMessageSend(ctx context.Context, w http.ResponseWriter, 
 		params.ID = uuid.New().String()
 	}
 
+	routingType := "auto"
+	if targetAgentID != "" {
+		routingType = "explicit"
+	}
+
+	start := time.Now()
 	ctx, span := telemetry.Tracer().Start(ctx, "a2a.gateway.request",
 		trace.WithAttributes(
 			attribute.String("a2a.method", req.Method),
 			attribute.String("a2a.task.id", params.ID),
+			attribute.String("a2a.routing.type", routingType),
 		),
 	)
 	defer span.End()
 
+	if h.metrics != nil {
+		h.metrics.TrackA2AInflight(ctx, 1)
+		defer h.metrics.TrackA2AInflight(ctx, -1)
+	}
+
 	// Route to agent
+	routeStart := time.Now()
 	agent, score, err := h.routeToAgent(ctx, targetAgentID, params)
+	routeDuration := time.Since(routeStart)
+
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		writeRPCError(w, req.ID, -32000, err.Error())
@@ -231,9 +251,16 @@ func (h *Handler) handleMessageSend(ctx context.Context, w http.ResponseWriter, 
 	span.SetAttributes(
 		attribute.String("a2a.routing.agent", agent.Name),
 		attribute.Float64("a2a.routing.score", score),
+		attribute.Int64("a2a.routing.duration_ms", routeDuration.Milliseconds()),
 	)
+	if h.metrics != nil {
+		h.metrics.RecordA2ARouting(ctx, agent.Name, score, routeDuration)
+	}
 
 	result, err := h.dispatchToAgent(ctx, agent, params)
+	latency := time.Since(start)
+	isError := err != nil
+
 	if err != nil {
 		h.logger.Error("a2a: dispatch failed", "agent", agent.Name, "error", err)
 		task := &Task{
@@ -242,11 +269,31 @@ func (h *Handler) handleMessageSend(ctx context.Context, w http.ResponseWriter, 
 		}
 		h.storeTask(task, agent.ID)
 		writeRPCResult(w, req.ID, task)
-		return
+	} else {
+		h.storeTask(result, agent.ID)
+		writeRPCResult(w, req.ID, result)
 	}
 
-	h.storeTask(result, agent.ID)
-	writeRPCResult(w, req.ID, result)
+	// Record metrics + stats
+	if h.metrics != nil {
+		h.metrics.RecordA2ARequest(ctx, agent.Name, req.Method, routingType, latency, isError)
+	}
+	if h.collector != nil {
+		status := TaskStateCompleted
+		if isError {
+			status = TaskStateFailed
+		} else if result != nil {
+			status = result.Status.State
+		}
+		h.collector.RecordA2A(stats.A2ARecord{
+			Agent:       agent.Name,
+			Method:      req.Method,
+			RoutingType: routingType,
+			Status:      status,
+			Latency:     latency,
+			Score:       score,
+		})
+	}
 }
 
 func (h *Handler) handleMessageStream(ctx context.Context, w http.ResponseWriter, req JSONRPCRequest, targetAgentID string) {

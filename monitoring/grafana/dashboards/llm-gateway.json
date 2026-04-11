@@ -197,9 +197,147 @@
         }
       ]
     }
+    ,
+    {
+      "id": 20,
+      "title": "── A2A Agents ──",
+      "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 40 },
+      "options": { "content": "## A2A Agent Metrics", "mode": "markdown" }
+    },
+    {
+      "id": 21,
+      "title": "A2A Request Rate by Agent",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 42 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (agent) (rate(gateway_a2a_requests_total[1m]))",
+          "legendFormat": "{{agent}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "title": "A2A Latency P95 by Agent",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 42 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (agent, le) (rate(gateway_a2a_request_duration_milliseconds_bucket[5m])))",
+          "legendFormat": "p95 {{agent}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "title": "Agent Health Status",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 50 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": { "thresholds": { "steps": [{ "color": "green", "value": null }] } },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "gateway_agents_healthy", "legendFormat": "Healthy", "refId": "A" },
+        { "expr": "gateway_agents_unhealthy", "legendFormat": "Unhealthy", "refId": "B" },
+        { "expr": "gateway_agents_total", "legendFormat": "Total", "refId": "C" }
+      ]
+    },
+    {
+      "id": 24,
+      "title": "Routing Score Distribution",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 50 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(gateway_a2a_routing_score_bucket[5m])))",
+          "legendFormat": "p50 score",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(gateway_a2a_routing_score_bucket[5m])))",
+          "legendFormat": "p95 score",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "title": "Discover & Embedding Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 50 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(gateway_discover_requests_total[1m])",
+          "legendFormat": "discover",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(gateway_embeddings_requests_total[1m])",
+          "legendFormat": "embeddings",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "title": "Agent Health Check Latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 58 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (agent, le) (rate(gateway_agent_health_duration_milliseconds_bucket[5m])))",
+          "legendFormat": "{{agent}}",
+          "refId": "A"
+        }
+      ]
+    }
   ],
   "schemaVersion": 39,
-  "tags": ["llm", "gateway"],
+  "tags": ["llm", "gateway", "a2a"],
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "title": "LLM Gateway",

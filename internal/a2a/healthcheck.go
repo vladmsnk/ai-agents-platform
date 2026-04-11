@@ -6,22 +6,26 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/vymoiseenkov/ai-agents-platform/internal/telemetry"
 )
 
 // AgentHealthChecker periodically pings registered agents to verify they are alive.
 type AgentHealthChecker struct {
 	registry *Registry
 	logger   *slog.Logger
+	metrics  *telemetry.Metrics
 	client   *http.Client
 	interval time.Duration
 	stop     chan struct{}
 	wg       sync.WaitGroup
 }
 
-func NewAgentHealthChecker(registry *Registry, logger *slog.Logger) *AgentHealthChecker {
+func NewAgentHealthChecker(registry *Registry, logger *slog.Logger, metrics *telemetry.Metrics) *AgentHealthChecker {
 	return &AgentHealthChecker{
 		registry: registry,
 		logger:   logger,
+		metrics:  metrics,
 		client:   &http.Client{Timeout: 5 * time.Second},
 		interval: 10 * time.Second,
 		stop:     make(chan struct{}),
@@ -60,6 +64,9 @@ func (h *AgentHealthChecker) checkAll() {
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
+	var healthy, unhealthy int
+	var mu sync.Mutex
+
 	for _, agent := range agents {
 		if agent.URL == "" {
 			continue
@@ -68,11 +75,27 @@ func (h *AgentHealthChecker) checkAll() {
 		go func(agent AgentCard) {
 			defer wg.Done()
 
-			healthy := h.ping(agent.URL)
+			start := time.Now()
+			isHealthy := h.ping(agent.URL)
+			latency := time.Since(start)
+
 			newStatus := StatusActive
-			if !healthy {
+			if !isHealthy {
 				newStatus = StatusUnhealthy
 			}
+
+			// Record health check metrics
+			if h.metrics != nil {
+				h.metrics.RecordAgentHealth(ctx, agent.ID, isHealthy, latency)
+			}
+
+			mu.Lock()
+			if isHealthy {
+				healthy++
+			} else {
+				unhealthy++
+			}
+			mu.Unlock()
 
 			if agent.Status != newStatus {
 				h.logger.Info("agent status changed",
@@ -85,6 +108,11 @@ func (h *AgentHealthChecker) checkAll() {
 		}(agent)
 	}
 	wg.Wait()
+
+	// Update agent count gauges
+	if h.metrics != nil {
+		h.metrics.SetAgentCounts(len(agents), healthy, unhealthy)
+	}
 }
 
 func (h *AgentHealthChecker) ping(baseURL string) bool {

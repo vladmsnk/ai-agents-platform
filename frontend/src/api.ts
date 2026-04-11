@@ -22,6 +22,17 @@ export interface HealthStatus {
   error?: string;
 }
 
+export interface AgentStatsEntry {
+  name: string;
+  total_tasks: number;
+  completed_tasks: number;
+  failed_tasks: number;
+  avg_latency_ms: number;
+  latency_p95_ms: number;
+  avg_score: number;
+  status: string;
+}
+
 export interface Stats {
   total_requests: number;
   active_providers: number;
@@ -34,6 +45,10 @@ export interface Stats {
   by_model: ModelStats[];
   recent_errors: ErrorEntry[];
   time_series: TimeSeriesPoint[];
+  a2a_total_tasks: number;
+  a2a_error_rate: number;
+  a2a_avg_latency_ms: number;
+  by_agent: AgentStatsEntry[];
 }
 
 export interface ProviderStats {
