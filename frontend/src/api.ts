@@ -121,6 +121,7 @@ export interface AgentCard {
 export interface DiscoverResult {
   agent: AgentCard;
   score: number;
+  proxy_url?: string;
 }
 
 export interface AgentInput {
@@ -163,10 +164,59 @@ export const api = {
   addAgent: (a: AgentInput) => request<AgentCard>('/agents', { method: 'POST', body: JSON.stringify(a) }),
   updateAgent: (id: string, a: Partial<AgentInput>) => request<AgentCard>(`/agents/${id}`, { method: 'PUT', body: JSON.stringify(a) }),
   deleteAgent: (id: string) => request<{ deleted: string }>(`/agents/${id}`, { method: 'DELETE' }),
-  discoverAgents: (query: string, topN = 5, minScore = 0.1) =>
+  discoverAgents: (query: string, topN = 5, minScore = 0.1, includeUnhealthy = false) =>
     request<DiscoverResult[]>('/agents/discover', {
       method: 'POST',
-      body: JSON.stringify({ query, top_n: topN, min_score: minScore }),
+      body: JSON.stringify({ query, top_n: topN, min_score: minScore, include_unhealthy: includeUnhealthy }),
     }),
   getAgentHealth: (id: string) => request<{ id: string; status: string }>(`/agents/${id}/health`),
+
+  // A2A protocol calls
+  sendA2A: async (agentId: string | null, method: string, params: Record<string, unknown>) => {
+    const url = agentId ? `/a2a/${agentId}` : '/a2a';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method, id: Date.now(), params }),
+    });
+    return res.json();
+  },
+
+  fetchA2AStream: async (
+    agentId: string | null,
+    params: Record<string, unknown>,
+    onEvent: (event: { type: string; data: unknown }) => void,
+  ) => {
+    const url = agentId ? `/a2a/${agentId}` : '/a2a';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'message/stream', id: Date.now(), params }),
+    });
+    const reader = res.body?.getReader();
+    if (!reader) return;
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      let currentEvent = '';
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          currentEvent = line.slice(7);
+        } else if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            onEvent({ type: currentEvent || 'message', data });
+          } catch { /* skip malformed */ }
+        }
+      }
+    }
+  },
+
+  getTasksList: (state?: string) =>
+    api.sendA2A(null, 'tasks/list', state ? { state } : {}),
 };
