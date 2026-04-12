@@ -1,0 +1,189 @@
+{
+  "realm": "agents",
+  "enabled": true,
+  "sslRequired": "none",
+  "roles": {
+    "realm": [
+      {
+        "name": "a2a-caller",
+        "description": "Can send messages to A2A agents via the gateway"
+      },
+      {
+        "name": "a2a-admin",
+        "description": "Can register, update, and delete agents"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "gateway",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "gateway-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": ["openid"],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-translator",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "translator-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": ["openid"],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-summarizer",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "summarizer-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": ["openid"],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-code-reviewer",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "code-reviewer-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": ["openid"],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-sentiment-analyzer",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "sentiment-analyzer-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": ["openid"],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-data-extractor",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "data-extractor-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": ["openid"],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-content-writer",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "content-writer-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": ["openid"],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-math-solver",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "math-solver-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": ["openid"],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-security-scanner",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "security-scanner-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": ["openid"],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "test-agent",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "test-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": ["openid"],
+      "optionalClientScopes": []
+    }
+  ],
+  "scopeMappings": [
+    {
+      "client": "gateway",
+      "roles": ["a2a-caller", "a2a-admin"]
+    },
+    {
+      "client": "agent-translator",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "agent-summarizer",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "agent-code-reviewer",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "agent-sentiment-analyzer",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "agent-data-extractor",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "agent-content-writer",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "agent-math-solver",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "agent-security-scanner",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "test-agent",
+      "roles": ["a2a-caller"]
+    }
+  ],
+  "clientScopeMappings": {
+    "realm-management": [
+      {
+        "client": "gateway",
+        "roles": ["manage-clients", "view-clients", "manage-users", "view-users"]
+      }
+    ]
+  }
+}

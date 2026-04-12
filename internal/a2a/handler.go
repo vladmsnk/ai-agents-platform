@@ -22,14 +22,20 @@ import (
 
 const taskTTL = 30 * time.Minute
 
+// TokenSource provides bearer tokens for outbound dispatch calls.
+type TokenSource interface {
+	GetToken(ctx context.Context) (string, error)
+}
+
 // Handler implements the A2A JSON-RPC endpoint and agent card endpoints.
 type Handler struct {
-	registry  *Registry
-	logger    *slog.Logger
-	selfCard  AgentCard
-	client    *http.Client
-	metrics   *telemetry.Metrics
-	collector *stats.Collector
+	registry    *Registry
+	logger      *slog.Logger
+	selfCard    AgentCard
+	client      *http.Client
+	metrics     *telemetry.Metrics
+	collector   *stats.Collector
+	tokenSource TokenSource // optional; nil = no auth on outbound calls
 
 	mu    sync.RWMutex
 	tasks map[string]*taskEntry
@@ -41,15 +47,16 @@ type taskEntry struct {
 	createdAt time.Time
 }
 
-func NewHandler(registry *Registry, logger *slog.Logger, selfCard AgentCard, metrics *telemetry.Metrics, collector *stats.Collector) *Handler {
+func NewHandler(registry *Registry, logger *slog.Logger, selfCard AgentCard, metrics *telemetry.Metrics, collector *stats.Collector, tokenSource TokenSource) *Handler {
 	h := &Handler{
-		registry:  registry,
-		logger:    logger,
-		selfCard:  selfCard,
-		client:    &http.Client{Timeout: 60 * time.Second},
-		metrics:   metrics,
-		collector: collector,
-		tasks:     make(map[string]*taskEntry),
+		registry:    registry,
+		logger:      logger,
+		selfCard:    selfCard,
+		client:      &http.Client{Timeout: 60 * time.Second},
+		metrics:     metrics,
+		collector:   collector,
+		tokenSource: tokenSource,
+		tasks:       make(map[string]*taskEntry),
 	}
 	go h.cleanupLoop()
 	return h
@@ -447,6 +454,16 @@ func (h *Handler) dispatchToAgent(ctx context.Context, agent AgentCard, params M
 		return nil, fmt.Errorf("create request for %s: %w", agent.Name, err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+
+	// Attach gateway's bearer token for authenticated dispatch.
+	if h.tokenSource != nil {
+		if token, tokenErr := h.tokenSource.GetToken(ctx); tokenErr != nil {
+			h.logger.Warn("a2a: failed to get dispatch token, sending unauthenticated", "error", tokenErr)
+		} else {
+			httpReq.Header.Set("Authorization", "Bearer "+token)
+		}
+	}
+
 	resp, err := h.client.Do(httpReq)
 	latency := time.Since(start)
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/vymoiseenkov/ai-agents-platform/internal/a2a"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/api"
+	"github.com/vymoiseenkov/ai-agents-platform/internal/auth"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/balancer"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/config"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/health"
@@ -130,6 +131,27 @@ func main() {
 	agentHealth.Start()
 	defer agentHealth.Stop()
 
+	// Keycloak auth setup (optional — disabled if keycloak config is absent or enabled=false)
+	var authMiddleware *auth.Middleware
+	var tokenSource a2a.TokenSource
+	var keycloakAdmin *auth.KeycloakAdmin
+	if cfg.Keycloak != nil && cfg.Keycloak.Enabled {
+		authMiddleware = auth.NewMiddleware(cfg.Keycloak.URL, cfg.Keycloak.Realm, logger)
+		if err := authMiddleware.WarmUp(ctx); err != nil {
+			logger.Warn("auth: failed to pre-fetch JWKS (will retry on first request)", "error", err)
+		}
+		tokenClient := auth.NewTokenClient(cfg.Keycloak.URL, cfg.Keycloak.Realm, cfg.Keycloak.ClientID, cfg.Keycloak.ClientSecret)
+		tokenSource = tokenClient
+		keycloakAdmin = auth.NewKeycloakAdmin(cfg.Keycloak.URL, cfg.Keycloak.Realm, tokenClient, logger)
+		logger.Info("keycloak auth enabled",
+			"url", cfg.Keycloak.URL,
+			"realm", cfg.Keycloak.Realm,
+			"client_id", cfg.Keycloak.ClientID,
+		)
+	} else {
+		logger.Info("keycloak auth disabled — all endpoints are open")
+	}
+
 	selfCard := a2a.AgentCard{
 		ID:          "llm-gateway",
 		Name:        "LLM Gateway",
@@ -148,10 +170,10 @@ func main() {
 		DefaultInputModes:  []string{"text"},
 		DefaultOutputModes: []string{"text"},
 	}
-	a2aHandler := a2a.NewHandler(registry, logger, selfCard, metrics, collector)
+	a2aHandler := a2a.NewHandler(registry, logger, selfCard, metrics, collector, tokenSource)
 
 	p := proxy.New(b, logger, collector, metrics)
-	mgmt := api.New(store, b, checker, collector, registry, logger, cfg.GatewayURL, metrics)
+	mgmt := api.New(store, b, checker, collector, registry, logger, cfg.GatewayURL, metrics, keycloakAdmin)
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/chat/completions", p)
@@ -164,13 +186,32 @@ func main() {
 	mgmt.Register(mux)
 	a2aHandler.Register(mux)
 
-	handler := corsMiddleware(mux)
+	var handler http.Handler = corsMiddleware(mux)
+	// Wrap only API/A2A/proxy routes with JWT validation; keep health, metrics, well-known open.
+	if authMiddleware != nil {
+		handler = authWithExclusions(authMiddleware, handler)
+	}
 
 	logger.Info("starting gateway", "listen", cfg.Listen)
 	if err := http.ListenAndServe(cfg.Listen, handler); err != nil {
 		logger.Error("server failed", "error", err)
 		os.Exit(1)
 	}
+}
+
+// authWithExclusions applies JWT auth to all routes except health, metrics, and agent card discovery.
+func authWithExclusions(m *auth.Middleware, next http.Handler) http.Handler {
+	protected := m.Protect(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/health",
+			r.URL.Path == "/metrics",
+			r.URL.Path == "/.well-known/agent.json":
+			next.ServeHTTP(w, r)
+		default:
+			protected.ServeHTTP(w, r)
+		}
+	})
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

@@ -7,8 +7,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -66,6 +68,90 @@ type discoverResult struct {
 	ProxyURL string    `json:"proxy_url"`
 }
 
+// tokenClient fetches and caches OAuth2 client_credentials tokens from Keycloak.
+type tokenClient struct {
+	tokenURL     string
+	clientID     string
+	clientSecret string
+
+	mu     sync.Mutex
+	token  string
+	expiry time.Time
+}
+
+func newTokenClient(keycloakURL, realm, clientID, clientSecret string) *tokenClient {
+	base := strings.TrimRight(keycloakURL, "/")
+	return &tokenClient{
+		tokenURL:     base + "/realms/" + realm + "/protocol/openid-connect/token",
+		clientID:     clientID,
+		clientSecret: clientSecret,
+	}
+}
+
+func (tc *tokenClient) getToken() (string, error) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	if tc.token != "" && time.Now().Before(tc.expiry) {
+		return tc.token, nil
+	}
+
+	data := url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {tc.clientID},
+		"client_secret": {tc.clientSecret},
+	}
+
+	resp, err := http.Post(tc.tokenURL, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("token request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, body)
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return "", fmt.Errorf("decode token: %w", err)
+	}
+
+	tc.token = tokenResp.AccessToken
+	tc.expiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn)*time.Second - 30*time.Second)
+	return tc.token, nil
+}
+
+// authClient wraps an http.Client to automatically attach bearer tokens.
+type authClient struct {
+	inner *http.Client
+	tc    *tokenClient // nil when auth is disabled
+}
+
+func (ac *authClient) do(req *http.Request) (*http.Response, error) {
+	if ac.tc != nil {
+		token, err := ac.tc.getToken()
+		if err != nil {
+			return nil, fmt.Errorf("get auth token: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return ac.inner.Do(req)
+}
+
+func (ac *authClient) post(url, contentType string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	return ac.do(req)
+}
+
 // agentConfig holds per-agent settings loaded from env vars.
 type agentConfig struct {
 	name        string
@@ -113,7 +199,22 @@ func main() {
 		Skills:      cfg.skills,
 	}
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	// Set up authenticated HTTP client if Keycloak is configured.
+	var tc *tokenClient
+	if keycloakURL := os.Getenv("KEYCLOAK_URL"); keycloakURL != "" {
+		kcRealm := envOrDefault("KEYCLOAK_REALM", "agents")
+		kcClientID := os.Getenv("KEYCLOAK_CLIENT_ID")
+		kcClientSecret := os.Getenv("KEYCLOAK_CLIENT_SECRET")
+		if kcClientID != "" && kcClientSecret != "" {
+			tc = newTokenClient(keycloakURL, kcRealm, kcClientID, kcClientSecret)
+			logger.Info("keycloak auth enabled for agent", "client_id", kcClientID)
+		}
+	}
+
+	client := &authClient{
+		inner: &http.Client{Timeout: 60 * time.Second},
+		tc:    tc,
+	}
 
 	// Start HTTP server
 	mux := http.NewServeMux()
@@ -132,17 +233,16 @@ func main() {
 	}()
 
 	// Register with the registry (retry until gateway is ready)
-	registerWithRetry(logger, registryURL, card)
+	registerWithRetry(logger, registryURL, card, client)
 
 	select {}
 }
 
-func registerWithRetry(logger *slog.Logger, registryURL string, card agentCard) {
+func registerWithRetry(logger *slog.Logger, registryURL string, card agentCard, client *authClient) {
 	body, _ := json.Marshal(card)
-	client := &http.Client{Timeout: 5 * time.Second}
 
 	for attempt := 1; attempt <= 30; attempt++ {
-		resp, err := client.Post(registryURL+"/api/agents", "application/json", bytes.NewReader(body))
+		resp, err := client.post(registryURL+"/api/agents", "application/json", bytes.NewReader(body))
 		if err != nil {
 			logger.Warn("registration attempt failed, retrying...", "attempt", attempt, "error", err)
 			time.Sleep(2 * time.Second)
@@ -162,7 +262,7 @@ func registerWithRetry(logger *slog.Logger, registryURL string, card agentCard) 
 	logger.Error("failed to register after all retries", "name", card.Name)
 }
 
-func handleA2A(logger *slog.Logger, client *http.Client, cfg agentConfig) http.HandlerFunc {
+func handleA2A(logger *slog.Logger, client *authClient, cfg agentConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -186,7 +286,7 @@ func handleA2A(logger *slog.Logger, client *http.Client, cfg agentConfig) http.H
 	}
 }
 
-func handleMessageSend(w http.ResponseWriter, req jsonrpcRequest, client *http.Client, cfg agentConfig, logger *slog.Logger) {
+func handleMessageSend(w http.ResponseWriter, req jsonrpcRequest, client *authClient, cfg agentConfig, logger *slog.Logger) {
 	var params messageSendParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		writeJSONRPCError(w, req.ID, -32602, "invalid params")
@@ -219,7 +319,7 @@ func handleMessageSend(w http.ResponseWriter, req jsonrpcRequest, client *http.C
 	writeTaskResult(w, req.ID, params.ID, "completed", responseText)
 }
 
-func handleMessageStream(w http.ResponseWriter, req jsonrpcRequest, client *http.Client, cfg agentConfig, logger *slog.Logger) {
+func handleMessageStream(w http.ResponseWriter, req jsonrpcRequest, client *authClient, cfg agentConfig, logger *slog.Logger) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeJSONRPCError(w, req.ID, -32000, "streaming not supported")
@@ -259,7 +359,7 @@ func handleMessageStream(w http.ResponseWriter, req jsonrpcRequest, client *http
 }
 
 // delegateWork discovers a suitable agent and sends work through the gateway proxy.
-func delegateWork(client *http.Client, cfg agentConfig, textToDelegate string, logger *slog.Logger) string {
+func delegateWork(client *authClient, cfg agentConfig, textToDelegate string, logger *slog.Logger) string {
 	// Step 1: Discover an agent
 	logger.Info("discovering agent", "query", cfg.delegateQuery)
 
@@ -268,7 +368,7 @@ func delegateWork(client *http.Client, cfg agentConfig, textToDelegate string, l
 		"top_n": 1,
 	})
 
-	resp, err := client.Post(cfg.gatewayURL+"/api/agents/discover", "application/json", bytes.NewReader(discoverBody))
+	resp, err := client.post(cfg.gatewayURL+"/api/agents/discover", "application/json", bytes.NewReader(discoverBody))
 	if err != nil {
 		logger.Error("discover call failed", "error", err)
 		return "[delegation failed: discover error]"
@@ -322,7 +422,7 @@ func delegateWork(client *http.Client, cfg agentConfig, textToDelegate string, l
 	proxyURL := target.ProxyURL
 	logger.Info("sending delegated task via proxy", "url", proxyURL)
 
-	proxyResp, err := client.Post(proxyURL, "application/json", bytes.NewReader(a2aBody))
+	proxyResp, err := client.post(proxyURL, "application/json", bytes.NewReader(a2aBody))
 	if err != nil {
 		logger.Error("proxy call failed", "error", err)
 		return "[delegation failed: proxy error]"
@@ -376,7 +476,7 @@ func extractText(params messageSendParams) string {
 	return ""
 }
 
-func callLLM(client *http.Client, gatewayURL, agentName, userText string, logger *slog.Logger) string {
+func callLLM(client *authClient, gatewayURL, agentName, userText string, logger *slog.Logger) string {
 	prompt := fmt.Sprintf("You are %s. Respond briefly to: %s", agentName, userText)
 	body, _ := json.Marshal(map[string]any{
 		"model": envOrDefault("LLM_MODEL", "google/gemma-4-26b-a4b-it:free"),
@@ -386,7 +486,7 @@ func callLLM(client *http.Client, gatewayURL, agentName, userText string, logger
 		"max_tokens": 200,
 	})
 
-	resp, err := client.Post(gatewayURL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	resp, err := client.post(gatewayURL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
 	if err != nil {
 		logger.Warn("LLM call failed, returning mock response", "error", err)
 		return fmt.Sprintf("[%s mock response] Processed: %s", agentName, userText)
