@@ -8,6 +8,9 @@
 set -uo pipefail
 
 GATEWAY="${1:-http://localhost:8080}"
+KEYCLOAK="${KEYCLOAK_URL:-http://localhost:8180}"
+REALM="${KEYCLOAK_REALM:-agents}"
+AUTH_TOKEN=""
 BLUE='\033[0;34m'
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -26,13 +29,14 @@ fail()     { FAIL=$((FAIL + 1)); echo -e "  ${RED}✗ $1${NC}"; }
 skip()     { SKIP=$((SKIP + 1)); echo -e "  ${YELLOW}⊘ SKIP: $1${NC}"; }
 info()     { echo -e "  ${DIM}$1${NC}"; }
 
-# Helpers
+# Helpers — automatically inject auth token when available
+_auth_header() { if [ -n "$AUTH_TOKEN" ]; then echo "-H" "Authorization: Bearer $AUTH_TOKEN"; fi; }
 jq_or_raw() { jq "$@" 2>/dev/null || cat; }
-http_post() { curl -s --max-time 60 -X POST "$1" -H "Content-Type: application/json" -d "$2" 2>&1; }
-http_get()  { curl -s --max-time 10 "$1" 2>&1; }
-http_del()  { curl -s --max-time 10 -X DELETE "$1" 2>&1; }
-http_put()  { curl -s --max-time 10 -X PUT "$1" -H "Content-Type: application/json" -d "$2" 2>&1; }
-http_status() { curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$@" 2>&1; }
+http_post() { curl -s --max-time 60 -X POST $(_auth_header) "$1" -H "Content-Type: application/json" -d "$2" 2>&1; }
+http_get()  { curl -s --max-time 10 $(_auth_header) "$1" 2>&1; }
+http_del()  { curl -s --max-time 10 -X DELETE $(_auth_header) "$1" 2>&1; }
+http_put()  { curl -s --max-time 10 -X PUT $(_auth_header) "$1" -H "Content-Type: application/json" -d "$2" 2>&1; }
+http_status() { curl -s -o /dev/null -w "%{http_code}" --max-time 10 $(_auth_header) "$@" 2>&1; }
 a2a_send()  { http_post "$GATEWAY/a2a$1" "$2"; }
 
 assert_eq() {
@@ -51,6 +55,22 @@ assert_ge() {
   local actual="$1" min="$2" msg="$3"
   if [ "$actual" -ge "$min" ] 2>/dev/null; then ok "$msg"; else fail "$msg (expected >= $min, got '$actual')"; fi
 }
+
+# Try to acquire an auth token (if Keycloak is available)
+KC_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$KEYCLOAK/realms/$REALM" 2>&1)
+if [ "$KC_STATUS" = "200" ]; then
+  AUTH_TOKEN=$(curl -s -X POST "$KEYCLOAK/realms/$REALM/protocol/openid-connect/token" \
+    -d "grant_type=client_credentials&client_id=test-agent&client_secret=test-secret" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    | jq -r '.access_token // empty' 2>/dev/null)
+  if [ -n "$AUTH_TOKEN" ]; then
+    echo -e "${GREEN}Auth: acquired token from Keycloak (test-agent)${NC}"
+  else
+    echo -e "${YELLOW}Auth: Keycloak reachable but token acquisition failed — running without auth${NC}"
+  fi
+else
+  echo -e "${DIM}Auth: Keycloak not available — running without auth${NC}"
+fi
 
 # ============================================================================
 section "1. INFRASTRUCTURE HEALTH"
@@ -134,7 +154,8 @@ REG_RESP=$(http_post "$GATEWAY/api/agents" '{
   "version": "1.0.0",
   "skills": [{"id":"test","name":"testing","description":"run tests"}]
 }')
-REG_NAME=$(echo "$REG_RESP" | jq -r '.name' 2>/dev/null)
+# Registration response may be {agent:{...}, credentials:{...}} (with auth) or flat AgentCard (without auth)
+REG_NAME=$(echo "$REG_RESP" | jq -r '.agent.name // .name' 2>/dev/null)
 assert_eq "$REG_NAME" "Test Agent One" "Agent registered successfully"
 
 step "3.2 Duplicate registration returns error"

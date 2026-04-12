@@ -28,14 +28,25 @@ const (
 	StrategyPriority = "priority"
 )
 
+type KeycloakConfig struct {
+	URL          string `yaml:"url" json:"url"`                     // e.g. http://keycloak:8180 (internal, for JWKS fetch + token exchange)
+	IssuerURL    string `yaml:"issuer_url" json:"issuer_url"`       // public Keycloak URL for token issuer validation (defaults to URL)
+	Realm        string `yaml:"realm" json:"realm"`                 // e.g. agents
+	ClientID     string `yaml:"client_id" json:"client_id"`         // gateway's own client ID
+	ClientSecret string `yaml:"client_secret" json:"-"`             // gateway's client secret
+	SecretEnv    string `yaml:"client_secret_env" json:"-"`         // env var for secret
+	Enabled      bool   `yaml:"enabled" json:"enabled"`
+}
+
 type Config struct {
-	Listen           string     `yaml:"listen" json:"listen"`
-	DatabaseURL      string     `yaml:"database_url" json:"-"`
-	Providers        []Provider `yaml:"providers" json:"providers"`
-	BalancerStrategy string     `yaml:"balancer_strategy" json:"balancer_strategy"`
-	JaegerURL        string     `yaml:"jaeger_url" json:"jaeger_url"`
-	EmbeddingModel   string     `yaml:"embedding_model" json:"embedding_model"`
-	GatewayURL       string     `yaml:"gateway_url" json:"gateway_url"`
+	Listen           string          `yaml:"listen" json:"listen"`
+	DatabaseURL      string          `yaml:"database_url" json:"-"`
+	Providers        []Provider      `yaml:"providers" json:"providers"`
+	BalancerStrategy string          `yaml:"balancer_strategy" json:"balancer_strategy"`
+	JaegerURL        string          `yaml:"jaeger_url" json:"jaeger_url"`
+	EmbeddingModel   string          `yaml:"embedding_model" json:"embedding_model"`
+	GatewayURL       string          `yaml:"gateway_url" json:"gateway_url"`
+	Keycloak         *KeycloakConfig `yaml:"keycloak" json:"keycloak,omitempty"`
 }
 
 func Load(path string) (*Config, error) {
@@ -65,6 +76,36 @@ func Load(path string) (*Config, error) {
 	}
 	if env := os.Getenv("GATEWAY_URL"); env != "" {
 		cfg.GatewayURL = env
+	}
+	if env := os.Getenv("KEYCLOAK_URL"); env != "" {
+		if cfg.Keycloak == nil {
+			cfg.Keycloak = &KeycloakConfig{}
+		}
+		cfg.Keycloak.URL = env
+	}
+	if env := os.Getenv("KEYCLOAK_ISSUER_URL"); env != "" {
+		if cfg.Keycloak == nil {
+			cfg.Keycloak = &KeycloakConfig{}
+		}
+		cfg.Keycloak.IssuerURL = env
+	}
+
+	// Resolve Keycloak client secret from env
+	if cfg.Keycloak != nil {
+		if cfg.Keycloak.Realm == "" {
+			cfg.Keycloak.Realm = "agents"
+		}
+		if cfg.Keycloak.ClientID == "" {
+			cfg.Keycloak.ClientID = "gateway"
+		}
+		if cfg.Keycloak.IssuerURL == "" {
+			cfg.Keycloak.IssuerURL = cfg.Keycloak.URL
+		}
+		if cfg.Keycloak.SecretEnv != "" {
+			if s := os.Getenv(cfg.Keycloak.SecretEnv); s != "" {
+				cfg.Keycloak.ClientSecret = s
+			}
+		}
 	}
 
 	for i := range cfg.Providers {

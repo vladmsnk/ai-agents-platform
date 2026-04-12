@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/vymoiseenkov/ai-agents-platform/internal/a2a"
+	"github.com/vymoiseenkov/ai-agents-platform/internal/auth"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/balancer"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/config"
 	"github.com/vymoiseenkov/ai-agents-platform/internal/health"
@@ -20,18 +21,19 @@ import (
 )
 
 type API struct {
-	store      *storage.Store
-	balancer   *balancer.Balancer
-	health     *health.Checker
-	stats      *stats.Collector
-	registry   *a2a.Registry
-	logger     *slog.Logger
-	metrics    *telemetry.Metrics
-	gatewayURL string
+	store         *storage.Store
+	balancer      *balancer.Balancer
+	health        *health.Checker
+	stats         *stats.Collector
+	registry      *a2a.Registry
+	logger        *slog.Logger
+	metrics       *telemetry.Metrics
+	gatewayURL    string
+	keycloakAdmin *auth.KeycloakAdmin // nil when auth is disabled
 }
 
-func New(store *storage.Store, b *balancer.Balancer, h *health.Checker, s *stats.Collector, registry *a2a.Registry, logger *slog.Logger, gatewayURL string, metrics *telemetry.Metrics) *API {
-	return &API{store: store, balancer: b, health: h, stats: s, registry: registry, logger: logger, gatewayURL: gatewayURL, metrics: metrics}
+func New(store *storage.Store, b *balancer.Balancer, h *health.Checker, s *stats.Collector, registry *a2a.Registry, logger *slog.Logger, gatewayURL string, metrics *telemetry.Metrics, keycloakAdmin *auth.KeycloakAdmin) *API {
+	return &API{store: store, balancer: b, health: h, stats: s, registry: registry, logger: logger, gatewayURL: gatewayURL, metrics: metrics, keycloakAdmin: keycloakAdmin}
 }
 
 func (a *API) Register(mux *http.ServeMux) {
@@ -410,7 +412,23 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, http.StatusCreated, agent)
+
+		// Provision Keycloak OAuth2 client for the new agent.
+		var creds *auth.ClientCredentials
+		if a.keycloakAdmin != nil {
+			var provErr error
+			creds, provErr = a.keycloakAdmin.ProvisionClient(r.Context(), agent.ID, agent.Name)
+			if provErr != nil {
+				a.logger.Error("failed to provision keycloak client (agent registered without credentials)",
+					"agent", agent.ID, "error", provErr)
+			}
+		}
+
+		resp := map[string]any{"agent": agent}
+		if creds != nil {
+			resp["credentials"] = creds
+		}
+		writeJSON(w, http.StatusCreated, resp)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -469,6 +487,12 @@ func (a *API) handleAgent(w http.ResponseWriter, r *http.Request) {
 			a.logger.Error("failed to delete agent", "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
+		}
+		// Clean up the Keycloak client.
+		if a.keycloakAdmin != nil {
+			if err := a.keycloakAdmin.DeleteClient(r.Context(), id); err != nil {
+				a.logger.Error("failed to delete keycloak client (agent already removed)", "agent", id, "error", err)
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"deleted": id})
 	default:

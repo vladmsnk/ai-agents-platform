@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { api } from '../api'
-import type { AgentCard, AgentInput, DiscoverResult } from '../api'
+import type { AgentCard, AgentInput, AgentCredentials, DiscoverResult } from '../api'
+import { TOKEN_ENDPOINT } from '../auth'
 import MetricCard from '../components/MetricCard'
 
 // ── Shared helpers ──────────────────────────────────────────────────
@@ -77,6 +78,9 @@ export default function Agents() {
   // Detail slide
   const [detailAgent, setDetailAgent] = useState<AgentCard | null>(null)
 
+  // Credentials shown after registration (one-time)
+  const [newCredentials, setNewCredentials] = useState<AgentCredentials | null>(null)
+
   // Playground pre-selection
   const [playgroundAgent, setPlaygroundAgent] = useState<string | null>(null)
 
@@ -123,8 +127,14 @@ export default function Agents() {
   const handleSave = async () => {
     setSaving(true)
     try {
-      if (editingId) await api.updateAgent(editingId, form)
-      else await api.addAgent(form)
+      if (editingId) {
+        await api.updateAgent(editingId, form)
+      } else {
+        const resp = await api.addAgent(form)
+        if (resp.credentials) {
+          setNewCredentials(resp.credentials)
+        }
+      }
       setSlideOpen(false)
       fetchAgents()
     } catch (e: unknown) {
@@ -196,6 +206,11 @@ export default function Agents() {
         <SlidePanel title={editingId ? 'Edit Agent' : 'Register Agent'} onClose={() => setSlideOpen(false)}>
           <AgentForm form={form} setForm={setForm} editingId={editingId} saving={saving} onSave={handleSave} onCancel={() => setSlideOpen(false)} />
         </SlidePanel>
+      )}
+
+      {/* Credentials dialog (shown once after registration) */}
+      {newCredentials && (
+        <CredentialsDialog credentials={newCredentials} onClose={() => setNewCredentials(null)} />
       )}
     </div>
   )
@@ -396,6 +411,28 @@ function AgentDetail({ agent, onEdit, onDelete, onPlayground }: {
         </div>
       </div>
 
+      {/* Authentication */}
+      <div>
+        <label className="text-xs font-medium text-gray-500 block mb-2">Authentication</label>
+        <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500">Client ID</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono text-gray-900">agent-{agent.id}</span>
+              <CopyButton text={`agent-${agent.id}`} />
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500">Token Endpoint</span>
+            <CopyButton text={TOKEN_ENDPOINT} label="Copy URL" />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500">Auth Scheme</span>
+            <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">OAuth2 client_credentials</span>
+          </div>
+        </div>
+      </div>
+
       {/* Agent Card JSON */}
       <div>
         <label className="text-xs font-medium text-gray-500 block mb-2">Agent Card JSON</label>
@@ -417,6 +454,76 @@ function AgentDetail({ agent, onEdit, onDelete, onPlayground }: {
         </button>
         <button onClick={onDelete} className="px-4 py-2.5 border border-red-200 rounded-lg text-sm text-red-600 hover:bg-red-50">
           Delete
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Credentials Dialog (one-time display after registration) ─────────
+
+function CredentialsDialog({ credentials, onClose }: { credentials: AgentCredentials; onClose: () => void }) {
+  const tokenEndpoint = TOKEN_ENDPOINT
+  const curlExample = `curl -X POST ${tokenEndpoint} \\
+  -d "grant_type=client_credentials" \\
+  -d "client_id=${credentials.client_id}" \\
+  -d "client_secret=${credentials.client_secret}"`
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40" />
+      <div className="relative bg-white rounded-xl shadow-2xl max-w-lg w-full mx-4 p-6">
+        <div className="flex items-start gap-3 mb-4">
+          <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center shrink-0">
+            <span className="text-green-600 text-lg">&#10003;</span>
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Agent Registered</h3>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Save these credentials now — the secret cannot be retrieved later.
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3 mb-4">
+          <div className="bg-gray-50 rounded-lg p-3">
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-medium text-gray-500">Client ID</label>
+              <CopyButton text={credentials.client_id} />
+            </div>
+            <p className="text-sm font-mono text-gray-900 break-all">{credentials.client_id}</p>
+          </div>
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-medium text-amber-700">Client Secret</label>
+              <CopyButton text={credentials.client_secret} />
+            </div>
+            <p className="text-sm font-mono text-amber-900 break-all">{credentials.client_secret}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-medium text-gray-500">Token Endpoint</label>
+              <CopyButton text={tokenEndpoint} />
+            </div>
+            <p className="text-xs font-mono text-gray-600 break-all">{tokenEndpoint}</p>
+          </div>
+        </div>
+
+        <details className="mb-4">
+          <summary className="text-xs font-medium text-gray-500 cursor-pointer hover:text-gray-700">Example: Get access token with curl</summary>
+          <div className="mt-2 bg-gray-900 rounded-lg p-3 relative">
+            <pre className="text-xs text-green-400 font-mono whitespace-pre-wrap">{curlExample}</pre>
+            <div className="absolute top-2 right-2">
+              <CopyButton text={curlExample} label="Copy" />
+            </div>
+          </div>
+        </details>
+
+        <button
+          onClick={onClose}
+          className="w-full px-4 py-2.5 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700"
+        >
+          I've saved the credentials
         </button>
       </div>
     </div>

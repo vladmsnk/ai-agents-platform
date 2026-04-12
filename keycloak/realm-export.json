@@ -1,0 +1,223 @@
+{
+  "realm": "agents",
+  "enabled": true,
+  "sslRequired": "none",
+  "roles": {
+    "realm": [
+      {
+        "name": "a2a-caller",
+        "description": "Can send messages to A2A agents via the gateway"
+      },
+      {
+        "name": "a2a-admin",
+        "description": "Can register, update, and delete agents"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "frontend-admin",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "redirectUris": ["http://localhost:8080/*", "http://localhost:5173/*"],
+      "webOrigins": ["http://localhost:8080", "http://localhost:5173"],
+      "protocol": "openid-connect",
+      "defaultClientScopes": [],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "gateway",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "gateway-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-translator",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "translator-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-summarizer",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "summarizer-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-code-reviewer",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "code-reviewer-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-sentiment-analyzer",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "sentiment-analyzer-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-data-extractor",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "data-extractor-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-content-writer",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "content-writer-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-math-solver",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "math-solver-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-security-scanner",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "security-scanner-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "test-agent",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "test-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [],
+      "optionalClientScopes": []
+    }
+  ],
+  "scopeMappings": [
+    {
+      "client": "frontend-admin",
+      "roles": ["a2a-caller", "a2a-admin"]
+    },
+    {
+      "client": "gateway",
+      "roles": ["a2a-caller", "a2a-admin"]
+    },
+    {
+      "client": "agent-translator",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "agent-summarizer",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "agent-code-reviewer",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "agent-sentiment-analyzer",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "agent-data-extractor",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "agent-content-writer",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "agent-math-solver",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "agent-security-scanner",
+      "roles": ["a2a-caller"]
+    },
+    {
+      "client": "test-agent",
+      "roles": ["a2a-caller"]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "email": "admin@gateway.local",
+      "firstName": "Admin",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["a2a-caller", "a2a-admin"]
+    },
+    {
+      "username": "service-account-gateway",
+      "enabled": true,
+      "serviceAccountClientId": "gateway",
+      "clientRoles": {
+        "realm-management": ["manage-clients", "view-clients", "manage-users", "view-users"]
+      },
+      "realmRoles": ["a2a-caller", "a2a-admin"]
+    }
+  ]
+}

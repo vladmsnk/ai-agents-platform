@@ -24,10 +24,14 @@ services:
     environment:
       DATABASE_URL: postgres://gateway:gateway@postgres:5432/gateway?sslmode=disable
       GATEWAY_URL: http://gateway:8080
+      KEYCLOAK_URL: http://keycloak:8180
+      KEYCLOAK_ISSUER_URL: http://localhost:8180
     expose:
       - "8080"
     depends_on:
       postgres:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
@@ -53,6 +57,25 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.2
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_PORT: 8180
+      KC_HOSTNAME: http://localhost:8180
+    ports:
+      - "8180:8180"
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
+    healthcheck:
+      test: ["CMD-SHELL", "cat < /dev/null > /dev/tcp/localhost/8180 2>/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
 
   jaeger:
     image: jaegertracing/jaeger:2.6.0
@@ -93,6 +116,9 @@ services:
       REGISTRY_URL: http://gateway:8080
       GATEWAY_URL: http://gateway:8080
       LISTEN: ":9001"
+      KEYCLOAK_URL: http://keycloak:8180
+      KEYCLOAK_CLIENT_ID: agent-translator
+      KEYCLOAK_CLIENT_SECRET: translator-secret
     expose:
       - "9001"
     depends_on:
@@ -111,6 +137,9 @@ services:
       REGISTRY_URL: http://gateway:8080
       GATEWAY_URL: http://gateway:8080
       LISTEN: ":9001"
+      KEYCLOAK_URL: http://keycloak:8180
+      KEYCLOAK_CLIENT_ID: agent-summarizer
+      KEYCLOAK_CLIENT_SECRET: summarizer-secret
     expose:
       - "9001"
     depends_on:
@@ -131,6 +160,9 @@ services:
       LISTEN: ":9001"
       DELEGATE_KEYWORD: "translate"
       DELEGATE_QUERY: "translate text to another language"
+      KEYCLOAK_URL: http://keycloak:8180
+      KEYCLOAK_CLIENT_ID: agent-code-reviewer
+      KEYCLOAK_CLIENT_SECRET: code-reviewer-secret
     expose:
       - "9001"
     depends_on:
@@ -149,6 +181,9 @@ services:
       REGISTRY_URL: http://gateway:8080
       GATEWAY_URL: http://gateway:8080
       LISTEN: ":9001"
+      KEYCLOAK_URL: http://keycloak:8180
+      KEYCLOAK_CLIENT_ID: agent-sentiment-analyzer
+      KEYCLOAK_CLIENT_SECRET: sentiment-analyzer-secret
     expose:
       - "9001"
     depends_on:
@@ -167,6 +202,9 @@ services:
       REGISTRY_URL: http://gateway:8080
       GATEWAY_URL: http://gateway:8080
       LISTEN: ":9001"
+      KEYCLOAK_URL: http://keycloak:8180
+      KEYCLOAK_CLIENT_ID: agent-data-extractor
+      KEYCLOAK_CLIENT_SECRET: data-extractor-secret
     expose:
       - "9001"
     depends_on:
@@ -187,6 +225,9 @@ services:
       LISTEN: ":9001"
       DELEGATE_KEYWORD: "translate"
       DELEGATE_QUERY: "translate text to another language"
+      KEYCLOAK_URL: http://keycloak:8180
+      KEYCLOAK_CLIENT_ID: agent-content-writer
+      KEYCLOAK_CLIENT_SECRET: content-writer-secret
     expose:
       - "9001"
     depends_on:
@@ -205,6 +246,9 @@ services:
       REGISTRY_URL: http://gateway:8080
       GATEWAY_URL: http://gateway:8080
       LISTEN: ":9001"
+      KEYCLOAK_URL: http://keycloak:8180
+      KEYCLOAK_CLIENT_ID: agent-math-solver
+      KEYCLOAK_CLIENT_SECRET: math-solver-secret
     expose:
       - "9001"
     depends_on:
@@ -225,6 +269,9 @@ services:
       LISTEN: ":9001"
       DELEGATE_KEYWORD: "summarize"
       DELEGATE_QUERY: "summarize document into key points"
+      KEYCLOAK_URL: http://keycloak:8180
+      KEYCLOAK_CLIENT_ID: agent-security-scanner
+      KEYCLOAK_CLIENT_SECRET: security-scanner-secret
     expose:
       - "9001"
     depends_on:
