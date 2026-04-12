@@ -27,6 +27,13 @@ Proxy OpenAI-compatible requests to multiple LLM providers with load balancing, 
 - Agent-to-agent delegation through the gateway with full tracing
 - Task lifecycle management (`tasks/get`, `tasks/list`, `tasks/cancel`)
 
+**Authentication (Keycloak)**
+- OAuth2 client_credentials flow — each agent gets its own identity
+- JWT validation on all protected endpoints via JWKS
+- Auto-provisioning: agent registration returns OAuth2 `client_id` + `client_secret`
+- Gateway authenticates itself when dispatching to downstream agents
+- Optional — disable with `keycloak.enabled: false`
+
 **Observability**
 - OpenTelemetry metrics exported to Prometheus (23 metrics across LLM and A2A)
 - Distributed tracing via OTLP to Jaeger
@@ -45,12 +52,13 @@ Proxy OpenAI-compatible requests to multiple LLM providers with load balancing, 
 
 ```mermaid
 flowchart LR
-    Client([Client / UI]) --> GW
-    GW[**Gateway**\nProxy · Balancer · A2A Router\nAgent Registry · Health Check] --> LLM[LLM Providers\nOpenRouter · OpenAI · Anthropic]
-    GW -- "semantic\nrouting" --> Agents[A2A Agents\n8 registered agents]
-    Agents -. "LLM calls +\ndiscovery" .-> GW
+    Client([Client / UI]) -->|Bearer JWT| GW
+    GW[**Gateway**\nProxy · Balancer · A2A Router\nAgent Registry · Auth] -->|API key| LLM[LLM Providers\nOpenRouter · OpenAI · Anthropic]
+    GW -->|Bearer JWT| Agents[A2A Agents\n8 registered agents]
+    Agents -.->|"LLM calls +\ndiscovery"| GW
     GW --> DB[(PostgreSQL)]
-    GW -. metrics .-> Obs[Prometheus → Grafana\nJaeger Tracing]
+    GW <-->|JWKS + tokens| KC[Keycloak\nOAuth2 / OIDC]
+    GW -.->|metrics| Obs[Prometheus → Grafana\nJaeger Tracing]
 ```
 
 ## Quick Start
@@ -89,6 +97,29 @@ Docker Compose starts 8 mock agents that auto-register with the gateway:
 | security-scanner | vulnerability scanning, OWASP, security audit | Delegates summarization tasks |
 
 ## API
+
+### Authentication
+
+When Keycloak is enabled, all API/A2A endpoints require a Bearer token. Open endpoints (`/health`, `/metrics`, `/.well-known/agent.json`) skip auth.
+
+```bash
+# Get a token (client_credentials flow)
+TOKEN=$(curl -s -X POST 'http://localhost:8180/realms/agents/protocol/openid-connect/token' \
+  -d 'grant_type=client_credentials&client_id=test-agent&client_secret=test-secret' \
+  | jq -r '.access_token')
+
+# Use the token with any API call
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/agents
+```
+
+Registering a new agent auto-provisions a Keycloak client and returns credentials:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" -X POST http://localhost:8080/api/agents \
+  -H "Content-Type: application/json" \
+  -d '{"id":"my-agent","name":"My Agent","url":"http://my-agent:9001"}'
+# Response: {"agent": {...}, "credentials": {"client_id": "agent-my-agent", "client_secret": "..."}}
+```
 
 ### LLM Proxy
 
@@ -176,6 +207,13 @@ jaeger_url: "jaeger:4318"
 embedding_model: "google/gemini-embedding-001"
 gateway_url: "http://localhost:8080"
 
+keycloak:
+  url: "http://keycloak:8180"
+  realm: "agents"
+  client_id: "gateway"
+  client_secret: "gateway-secret"
+  enabled: true  # set to false to disable auth
+
 providers:
   - name: openrouter
     url: https://openrouter.ai/api
@@ -188,13 +226,14 @@ providers:
     timeout_seconds: 120
 ```
 
-Environment variables: `DATABASE_URL`, `GATEWAY_URL`, `OPENROUTER_API_KEY` (or any key via `key_env`).
+Environment variables: `DATABASE_URL`, `GATEWAY_URL`, `KEYCLOAK_URL`, `OPENROUTER_API_KEY` (or any key via `key_env`).
 
 ## Services
 
 | Service | Port | URL |
 |---------|------|-----|
 | Admin UI | 8080 | http://localhost:8080 |
+| Keycloak | 8180 | http://localhost:8180 |
 | Grafana | 3000 | http://localhost:3000 |
 | Jaeger | 16686 | http://localhost:16686 |
 | Prometheus | 9090 | http://localhost:9090 |
@@ -207,14 +246,18 @@ Environment variables: `DATABASE_URL`, `GATEWAY_URL`, `OPENROUTER_API_KEY` (or a
 - **Frontend**: React 19, TypeScript, Tailwind CSS 4, Vite, Recharts
 - **Observability**: OpenTelemetry, Prometheus, Grafana, Jaeger
 - **Protocol**: [Google A2A](https://a2a-protocol.org/) v1.0 with v0.3 backward compatibility
+- **Auth**: Keycloak 26.2 (OAuth2 client_credentials, JWT/JWKS)
 - **Embeddings**: OpenRouter (Gemini Embedding 001) with deterministic mock fallback
-- **Containers**: Docker Compose (14 services)
+- **Containers**: Docker Compose (15 services)
 
 ## Testing
 
 ```bash
-# Run basic E2E tests (69 tests)
+# Run basic E2E tests (69 tests — auto-acquires auth token if Keycloak is available)
 ./scripts/test-a2a-e2e.sh
+
+# Run auth E2E tests (37 tests — Keycloak integration, token validation, provisioning)
+./scripts/test-auth-e2e.sh
 
 # Run advanced tests (61 tests — concurrency, delegation chains, edge cases)
 ./scripts/test-a2a-advanced.sh

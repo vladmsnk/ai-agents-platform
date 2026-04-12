@@ -10,7 +10,8 @@ An LLM Gateway / AI Agents Platform that proxies OpenAI-compatible `/v1/chat/com
 - **Database**: PostgreSQL 17 via `pgx/v5` connection pool
 - **Frontend**: React 19 + TypeScript + Tailwind CSS 4 + Vite
 - **Observability**: OpenTelemetry (metrics → Prometheus, traces → Jaeger), Grafana dashboards
-- **Containers**: Docker Compose with 6 services (postgres, gateway, frontend, prometheus, grafana, jaeger)
+- **Auth**: Keycloak 26.2 (OAuth2 client_credentials flow, JWT validation via JWKS)
+- **Containers**: Docker Compose with 6 services (postgres, gateway, frontend, prometheus, grafana, jaeger, keycloak)
 
 ## Architecture
 
@@ -35,8 +36,11 @@ internal/
   a2a/agentcard.go           — Google A2A spec types (AgentCard, JSON-RPC, Task)
   a2a/handler.go             — A2A v1.0 JSON-RPC gateway with semantic routing (message/send, message/stream, tasks/get, tasks/cancel, tasks/list) + v0.3 backward compat
   a2a/registry.go            — Agent registry with semantic search (in-memory cache + DB + embeddings)
-  a2a/embedder.go            — Embedding client, calls gateway's /v1/embeddings for vectorization
+  a2a/embedder.go            — Embedding client, calls gateway's /v1/embeddings for vectorization (auth-aware)
   a2a/healthcheck.go         — Background agent health checker (pings /health every 10s)
+  auth/middleware.go          — JWT validation middleware (JWKS fetch+cache, token verification, claims extraction)
+  auth/token.go              — OAuth2 client_credentials token client with caching (for outbound dispatch)
+  auth/keycloak.go           — Keycloak Admin REST API client (auto-provision/delete OAuth2 clients on agent CRUD)
 frontend/src/
   api.ts                     — TypeScript API client with all types
   App.tsx                    — Layout with sidebar navigation
@@ -63,6 +67,10 @@ frontend/src/
 - **A2A semantic routing**: `POST /a2a` extracts message text, calls `Discover()` to find the best matching agent, dispatches to it. `POST /a2a/{agent-id}` bypasses discovery for explicit targeting.
 - **A2A protocol v1.0 + v0.3 compat**: Handler accepts both `message/send` and `tasks/send`, both `message/stream` and `tasks/sendSubscribe`. Dispatch always uses `message/send` to downstream agents.
 - **Discover results include `proxy_url`**: Each result has a `proxy_url` field (e.g. `http://gateway:8080/a2a/translator`) so agents can route through the gateway.
+- **Keycloak auth (optional)**: Enabled via `keycloak` section in config.yaml. Uses OAuth2 client_credentials flow — each agent is a Keycloak client. Gateway validates inbound JWTs via JWKS (cached, auto-refreshed). Gateway attaches its own token on outbound dispatch. Open endpoints (`/health`, `/metrics`, `/.well-known/agent.json`) skip auth.
+- **Auto-provisioning**: `POST /api/agents` creates a Keycloak OAuth2 client and returns `client_id` + `client_secret`. `DELETE /api/agents/{id}` removes the Keycloak client. Uses Keycloak Admin REST API with `manage-clients` role.
+- **Token issuer consistency**: Keycloak runs with `KC_HOSTNAME=http://keycloak:8180` so all tokens have a stable `iss` claim regardless of access URL (localhost vs docker-internal).
+- **Auth is opt-in**: Set `keycloak.enabled: false` or remove the section to disable. All code paths check for nil `TokenSource`/`KeycloakAdmin`.
 
 ## Build & Run
 
@@ -87,6 +95,7 @@ docker-compose up --build -d
 | Jaeger UI  | 16686 | http://localhost:16686      |
 | Prometheus | 9090  | http://localhost:9090       |
 | PostgreSQL | 5432  | localhost:5432              |
+| Keycloak   | 8180  | http://localhost:8180       |
 | Jaeger OTLP| 4318  | (internal, gateway → jaeger)|
 
 ## API Endpoints
