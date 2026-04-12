@@ -16,6 +16,18 @@
   },
   "clients": [
     {
+      "clientId": "frontend-admin",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "redirectUris": ["http://localhost:8080/*", "http://localhost:5173/*"],
+      "webOrigins": ["http://localhost:8080", "http://localhost:5173"],
+      "protocol": "openid-connect",
+      "defaultClientScopes": [],
+      "optionalClientScopes": []
+    },
+    {
       "clientId": "gateway",
       "enabled": true,
       "clientAuthenticatorType": "client-secret",
@@ -138,6 +150,10 @@
   ],
   "scopeMappings": [
     {
+      "client": "frontend-admin",
+      "roles": ["a2a-caller", "a2a-admin"]
+    },
+    {
       "client": "gateway",
       "roles": ["a2a-caller", "a2a-admin"]
     },
@@ -179,6 +195,21 @@
     }
   ],
   "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "email": "admin@gateway.local",
+      "firstName": "Admin",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["a2a-caller", "a2a-admin"]
+    },
     {
       "username": "service-account-gateway",
       "enabled": true,

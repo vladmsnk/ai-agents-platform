@@ -66,10 +66,17 @@ type Middleware struct {
 }
 
 // NewMiddleware creates JWT validation middleware for a Keycloak realm.
-func NewMiddleware(keycloakURL, realm string, logger *slog.Logger) *Middleware {
+// keycloakURL is used for JWKS fetching (internal network).
+// issuerBaseURL is used for token issuer validation (may differ when KC_HOSTNAME differs from internal URL).
+// If issuerBaseURL is empty, keycloakURL is used for both.
+func NewMiddleware(keycloakURL, issuerBaseURL, realm string, logger *slog.Logger) *Middleware {
 	base := strings.TrimRight(keycloakURL, "/")
+	issuerBase := base
+	if issuerBaseURL != "" {
+		issuerBase = strings.TrimRight(issuerBaseURL, "/")
+	}
 	return &Middleware{
-		issuerURL: base + "/realms/" + realm,
+		issuerURL: issuerBase + "/realms/" + realm,
 		jwksURL:   base + "/realms/" + realm + "/protocol/openid-connect/certs",
 		logger:    logger,
 	}
@@ -87,7 +94,9 @@ func (m *Middleware) Protect(next http.Handler) http.Handler {
 		claims, err := m.validate(r)
 		if err != nil {
 			m.logger.Warn("auth: rejected request", "error", err, "path", r.URL.Path)
-			http.Error(w, `{"error":"unauthorized","message":"`+err.Error()+`"}`, http.StatusUnauthorized)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized", "message": err.Error()})
 			return
 		}
 		ctx := context.WithValue(r.Context(), ClaimsKey, claims)

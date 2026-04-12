@@ -1,3 +1,5 @@
+import { getAccessToken } from './auth';
+
 const BASE = '/api';
 
 export interface Provider {
@@ -129,8 +131,19 @@ export interface AgentCard {
     stateTransitionHistory: boolean;
   };
   skills: { id: string; name: string; description: string; tags?: string[] }[];
+  authentication?: { schemes: { scheme: string }[] };
   provider_name?: string;
   status: string;
+}
+
+export interface AgentCredentials {
+  client_id: string;
+  client_secret: string;
+}
+
+export interface AgentRegisterResponse {
+  agent: AgentCard;
+  credentials?: AgentCredentials;
 }
 
 export interface DiscoverResult {
@@ -150,10 +163,18 @@ export interface AgentInput {
   provider_name?: string;
 }
 
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = await getAccessToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
+}
+
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
+  const headers = await authHeaders();
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...opts,
+    headers: { ...headers, ...(opts?.headers as Record<string, string>) },
   });
   if (!res.ok) {
     const text = await res.text();
@@ -176,7 +197,7 @@ export const api = {
   // Agents
   getAgents: () => request<AgentCard[]>('/agents'),
   getAgent: (id: string) => request<AgentCard>(`/agents/${id}`),
-  addAgent: (a: AgentInput) => request<AgentCard>('/agents', { method: 'POST', body: JSON.stringify(a) }),
+  addAgent: (a: AgentInput) => request<AgentRegisterResponse>('/agents', { method: 'POST', body: JSON.stringify(a) }),
   updateAgent: (id: string, a: Partial<AgentInput>) => request<AgentCard>(`/agents/${id}`, { method: 'PUT', body: JSON.stringify(a) }),
   deleteAgent: (id: string) => request<{ deleted: string }>(`/agents/${id}`, { method: 'DELETE' }),
   discoverAgents: (query: string, topN = 5, minScore = 0.1, includeUnhealthy = false) =>
@@ -189,9 +210,10 @@ export const api = {
   // A2A protocol calls
   sendA2A: async (agentId: string | null, method: string, params: Record<string, unknown>) => {
     const url = agentId ? `/a2a/${agentId}` : '/a2a';
+    const headers = await authHeaders();
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ jsonrpc: '2.0', method, id: Date.now(), params }),
     });
     return res.json();
@@ -203,9 +225,10 @@ export const api = {
     onEvent: (event: { type: string; data: unknown }) => void,
   ) => {
     const url = agentId ? `/a2a/${agentId}` : '/a2a';
+    const headers = await authHeaders();
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ jsonrpc: '2.0', method: 'message/stream', id: Date.now(), params }),
     });
     const reader = res.body?.getReader();

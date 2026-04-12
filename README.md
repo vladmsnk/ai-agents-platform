@@ -48,6 +48,22 @@ Proxy OpenAI-compatible requests to multiple LLM providers with load balancing, 
 - Semantic discovery UI with relevance score visualization
 - Real-time monitoring dashboard with auto-refresh
 
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><b>Login (Keycloak OAuth2)</b><br><img src="docs/screenshots/login.png" alt="Login page" width="100%"></td>
+    <td width="50%"><b>Providers</b><br><img src="docs/screenshots/providers.png" alt="Provider management" width="100%"></td>
+  </tr>
+  <tr>
+    <td width="50%"><b>A2A Agents</b><br><img src="docs/screenshots/agents.png" alt="Agent registry" width="100%"></td>
+    <td width="50%"><b>Monitoring</b><br><img src="docs/screenshots/monitoring.png" alt="Monitoring dashboard" width="100%"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><b>A2A Playground</b><br><img src="docs/screenshots/playground.png" alt="A2A Playground" width="50%"></td>
+  </tr>
+</table>
+
 ## Architecture
 
 ```mermaid

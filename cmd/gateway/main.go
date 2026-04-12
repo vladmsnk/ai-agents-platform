@@ -122,7 +122,7 @@ func main() {
 	var tokenSource a2a.TokenSource
 	var keycloakAdmin *auth.KeycloakAdmin
 	if cfg.Keycloak != nil && cfg.Keycloak.Enabled {
-		authMiddleware = auth.NewMiddleware(cfg.Keycloak.URL, cfg.Keycloak.Realm, logger)
+		authMiddleware = auth.NewMiddleware(cfg.Keycloak.URL, cfg.Keycloak.IssuerURL, cfg.Keycloak.Realm, logger)
 		if err := authMiddleware.WarmUp(ctx); err != nil {
 			logger.Warn("auth: failed to pre-fetch JWKS (will retry on first request)", "error", err)
 		}

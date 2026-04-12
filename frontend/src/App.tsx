@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
+import { useAuth } from './AuthContext'
 import Providers from './pages/Providers'
 import Models from './pages/Models'
 import Monitoring from './pages/Monitoring'
@@ -12,10 +13,41 @@ const navItems = [
   { to: '/monitoring', label: 'Monitoring', icon: '◉' },
 ]
 
+function LoginPage({ onLogin }: { onLogin: () => void }) {
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-gray-50">
+      <div className="bg-white rounded-xl shadow-lg p-8 max-w-sm w-full text-center">
+        <div className="text-5xl mb-4">⬡</div>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">LLM Gateway</h1>
+        <p className="text-gray-500 text-sm mb-6">Sign in to access the admin panel</p>
+        <button
+          onClick={onLogin}
+          className="w-full bg-primary-600 hover:bg-primary-700 text-white font-medium py-2.5 px-4 rounded-lg transition-colors"
+        >
+          Sign in with Keycloak
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
+  const { user, loading, login, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const closeSidebar = () => setSidebarOpen(false)
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <div className="text-gray-400 text-sm">Loading...</div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <LoginPage onLogin={login} />
+  }
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -59,8 +91,20 @@ export default function App() {
             </NavLink>
           ))}
         </nav>
-        <div className="px-5 py-4 border-t border-slate-700">
-          <p className="text-slate-500 text-xs">v1.0.0</p>
+        <div className="px-4 py-4 border-t border-slate-700">
+          <div className="flex items-center justify-between">
+            <div className="min-w-0">
+              <p className="text-slate-200 text-sm truncate">{user.preferred_username}</p>
+              <p className="text-slate-500 text-xs">v1.0.0</p>
+            </div>
+            <button
+              onClick={logout}
+              title="Sign out"
+              className="text-slate-400 hover:text-white transition-colors text-xs px-2 py-1 rounded hover:bg-sidebar-hover shrink-0"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </aside>
 

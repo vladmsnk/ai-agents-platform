@@ -29,7 +29,8 @@ const (
 )
 
 type KeycloakConfig struct {
-	URL          string `yaml:"url" json:"url"`                     // e.g. http://keycloak:8180
+	URL          string `yaml:"url" json:"url"`                     // e.g. http://keycloak:8180 (internal, for JWKS fetch + token exchange)
+	IssuerURL    string `yaml:"issuer_url" json:"issuer_url"`       // public Keycloak URL for token issuer validation (defaults to URL)
 	Realm        string `yaml:"realm" json:"realm"`                 // e.g. agents
 	ClientID     string `yaml:"client_id" json:"client_id"`         // gateway's own client ID
 	ClientSecret string `yaml:"client_secret" json:"-"`             // gateway's client secret
@@ -82,6 +83,12 @@ func Load(path string) (*Config, error) {
 		}
 		cfg.Keycloak.URL = env
 	}
+	if env := os.Getenv("KEYCLOAK_ISSUER_URL"); env != "" {
+		if cfg.Keycloak == nil {
+			cfg.Keycloak = &KeycloakConfig{}
+		}
+		cfg.Keycloak.IssuerURL = env
+	}
 
 	// Resolve Keycloak client secret from env
 	if cfg.Keycloak != nil {
@@ -90,6 +97,9 @@ func Load(path string) (*Config, error) {
 		}
 		if cfg.Keycloak.ClientID == "" {
 			cfg.Keycloak.ClientID = "gateway"
+		}
+		if cfg.Keycloak.IssuerURL == "" {
+			cfg.Keycloak.IssuerURL = cfg.Keycloak.URL
 		}
 		if cfg.Keycloak.SecretEnv != "" {
 			if s := os.Getenv(cfg.Keycloak.SecretEnv); s != "" {
