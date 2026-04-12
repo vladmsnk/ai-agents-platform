@@ -64,6 +64,7 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
       KC_HTTP_PORT: 8180
+      KC_HOSTNAME: http://keycloak:8180
     ports:
       - "8180:8180"
     volumes:

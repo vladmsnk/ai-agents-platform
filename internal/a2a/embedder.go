@@ -12,15 +12,17 @@ import (
 
 // Embedder calls the gateway's /v1/embeddings endpoint to vectorize text.
 type Embedder struct {
-	gatewayURL string
-	model      string
-	client     *http.Client
+	gatewayURL  string
+	model       string
+	client      *http.Client
+	tokenSource TokenSource // optional; nil = no auth
 }
 
-func NewEmbedder(gatewayURL, model string) *Embedder {
+func NewEmbedder(gatewayURL, model string, tokenSource TokenSource) *Embedder {
 	return &Embedder{
-		gatewayURL: strings.TrimRight(gatewayURL, "/"),
-		model:      model,
+		gatewayURL:  strings.TrimRight(gatewayURL, "/"),
+		model:       model,
+		tokenSource: tokenSource,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -50,6 +52,12 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float64, error) {
 		return nil, fmt.Errorf("create embedding request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+
+	if e.tokenSource != nil {
+		if token, tokenErr := e.tokenSource.GetToken(ctx); tokenErr == nil {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+	}
 
 	resp, err := e.client.Do(req)
 	if err != nil {

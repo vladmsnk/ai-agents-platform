@@ -178,12 +178,15 @@
       "roles": ["a2a-caller"]
     }
   ],
-  "clientScopeMappings": {
-    "realm-management": [
-      {
-        "client": "gateway",
-        "roles": ["manage-clients", "view-clients", "manage-users", "view-users"]
-      }
-    ]
-  }
+  "users": [
+    {
+      "username": "service-account-gateway",
+      "enabled": true,
+      "serviceAccountClientId": "gateway",
+      "clientRoles": {
+        "realm-management": ["manage-clients", "view-clients", "manage-users", "view-users"]
+      },
+      "realmRoles": ["a2a-caller", "a2a-admin"]
+    }
+  ]
 }

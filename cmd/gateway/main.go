@@ -117,20 +117,6 @@ func main() {
 		logger.Info("registered model", "model", m)
 	}
 
-	// A2A Agent Registry with semantic search
-	embedder := a2a.NewEmbedder(cfg.GatewayURL, cfg.EmbeddingModel)
-	registry := a2a.NewRegistry(store, embedder, logger)
-	if err := registry.LoadFromDB(ctx); err != nil {
-		logger.Error("failed to load agents from db", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("loaded agents from database", "count", len(registry.List()))
-
-	// Agent health checker
-	agentHealth := a2a.NewAgentHealthChecker(registry, logger, metrics)
-	agentHealth.Start()
-	defer agentHealth.Stop()
-
 	// Keycloak auth setup (optional — disabled if keycloak config is absent or enabled=false)
 	var authMiddleware *auth.Middleware
 	var tokenSource a2a.TokenSource
@@ -151,6 +137,20 @@ func main() {
 	} else {
 		logger.Info("keycloak auth disabled — all endpoints are open")
 	}
+
+	// A2A Agent Registry with semantic search
+	embedder := a2a.NewEmbedder(cfg.GatewayURL, cfg.EmbeddingModel, tokenSource)
+	registry := a2a.NewRegistry(store, embedder, logger)
+	if err := registry.LoadFromDB(ctx); err != nil {
+		logger.Error("failed to load agents from db", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("loaded agents from database", "count", len(registry.List()))
+
+	// Agent health checker
+	agentHealth := a2a.NewAgentHealthChecker(registry, logger, metrics)
+	agentHealth.Start()
+	defer agentHealth.Stop()
 
 	selfCard := a2a.AgentCard{
 		ID:          "llm-gateway",

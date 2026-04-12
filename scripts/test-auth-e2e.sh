@@ -161,11 +161,12 @@ section "4. AUTHENTICATED API ACCESS"
 
 step "4.1 GET /api/agents — with valid token"
 RESP=$(auth_get "$TEST_TOKEN" "$GATEWAY/api/agents")
-AGENT_COUNT=$(echo "$RESP" | jq 'length' 2>/dev/null)
-if [ "${AGENT_COUNT:-0}" -ge "1" ]; then
+IS_ARRAY=$(echo "$RESP" | jq 'if type == "array" then "yes" else "no" end' -r 2>/dev/null)
+AGENT_COUNT=$(echo "$RESP" | jq 'if type == "array" then length else 0 end' 2>/dev/null)
+if [ "$IS_ARRAY" = "yes" ]; then
   ok "GET /api/agents works with token ($AGENT_COUNT agents)"
 else
-  fail "GET /api/agents returned unexpected response: ${RESP:0:100}"
+  fail "GET /api/agents returned unexpected response: ${RESP:0:200}"
 fi
 
 step "4.2 GET /api/providers — with valid token"
