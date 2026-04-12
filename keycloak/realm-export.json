@@ -24,7 +24,7 @@
       "directAccessGrantsEnabled": false,
       "publicClient": false,
       "protocol": "openid-connect",
-      "defaultClientScopes": ["openid"],
+      "defaultClientScopes": [],
       "optionalClientScopes": []
     },
     {
@@ -36,7 +36,7 @@
       "directAccessGrantsEnabled": false,
       "publicClient": false,
       "protocol": "openid-connect",
-      "defaultClientScopes": ["openid"],
+      "defaultClientScopes": [],
       "optionalClientScopes": []
     },
     {
@@ -48,7 +48,7 @@
       "directAccessGrantsEnabled": false,
       "publicClient": false,
       "protocol": "openid-connect",
-      "defaultClientScopes": ["openid"],
+      "defaultClientScopes": [],
       "optionalClientScopes": []
     },
     {
@@ -60,7 +60,7 @@
       "directAccessGrantsEnabled": false,
       "publicClient": false,
       "protocol": "openid-connect",
-      "defaultClientScopes": ["openid"],
+      "defaultClientScopes": [],
       "optionalClientScopes": []
     },
     {
@@ -72,7 +72,7 @@
       "directAccessGrantsEnabled": false,
       "publicClient": false,
       "protocol": "openid-connect",
-      "defaultClientScopes": ["openid"],
+      "defaultClientScopes": [],
       "optionalClientScopes": []
     },
     {
@@ -84,7 +84,7 @@
       "directAccessGrantsEnabled": false,
       "publicClient": false,
       "protocol": "openid-connect",
-      "defaultClientScopes": ["openid"],
+      "defaultClientScopes": [],
       "optionalClientScopes": []
     },
     {
@@ -96,7 +96,7 @@
       "directAccessGrantsEnabled": false,
       "publicClient": false,
       "protocol": "openid-connect",
-      "defaultClientScopes": ["openid"],
+      "defaultClientScopes": [],
       "optionalClientScopes": []
     },
     {
@@ -108,7 +108,7 @@
       "directAccessGrantsEnabled": false,
       "publicClient": false,
       "protocol": "openid-connect",
-      "defaultClientScopes": ["openid"],
+      "defaultClientScopes": [],
       "optionalClientScopes": []
     },
     {
@@ -120,7 +120,7 @@
       "directAccessGrantsEnabled": false,
       "publicClient": false,
       "protocol": "openid-connect",
-      "defaultClientScopes": ["openid"],
+      "defaultClientScopes": [],
       "optionalClientScopes": []
     },
     {
@@ -132,7 +132,7 @@
       "directAccessGrantsEnabled": false,
       "publicClient": false,
       "protocol": "openid-connect",
-      "defaultClientScopes": ["openid"],
+      "defaultClientScopes": [],
       "optionalClientScopes": []
     }
   ],

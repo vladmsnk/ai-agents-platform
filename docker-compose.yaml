@@ -59,7 +59,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.2
-    command: start-dev --import-realm --health-enabled=true
+    command: start-dev --import-realm
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
@@ -69,7 +69,7 @@ services:
     volumes:
       - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
     healthcheck:
-      test: ["CMD-SHELL", "cat < /dev/null > /dev/tcp/localhost/9000 2>/dev/null"]
+      test: ["CMD-SHELL", "cat < /dev/null > /dev/tcp/localhost/8180 2>/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 20
